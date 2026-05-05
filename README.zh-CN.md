@@ -8,11 +8,17 @@
 
 你有多个 AI Agent 在同一个代码库里工作：
 - **OpenClaw** 负责编排和记忆管理
-- **Codex** 做深度代码实现
+- **Hermes**（基于 Codex）负责实现功能和修 Bug
 - **Claude Code** 做代码审查和重构
 - **Cursor** 在编辑器里
 
 每个 Agent 有独立的上下文窗口，互相看不到对方的进度。你花在 Agent 之间复制上下文的时间，比真正写代码还多。
+
+### 起源
+
+这个项目诞生于真实痛点：OpenClaw 用 **Hermes**（一个基于 Codex 的 Agent）来实现上游 PR。每次 Hermes 完成一段工作，会写一份 22KB 的交接文档。OpenClaw 要解析这份文档，用 `gh pr view` 交叉验证，然后手动拼出当前状态。每次聪聪问"进展怎样？"，OpenClaw 都要重复这套流程。
+
+Agent Mesh 用一条 `mesh status` 取代了这一切。
 
 ## 怎么解决
 
@@ -213,7 +219,7 @@ python3 tests/test_cli.py
 
 ## 实际案例
 
-这个项目诞生于真实需求：[OpenClaw](https://github.com/openclaw/openclaw) 使用多个 Agent（OpenClaw 主进程、Hermes/Codex 做 PR、Claude Code 做 review）。在 Agent Mesh 之前，进度同步是手动的。现在：
+这个项目诞生于真实需求：[OpenClaw](https://github.com/openclaw/openclaw) 使用多个 Agent——**OpenClaw** 作为主编排器，**Hermes**（基于 [Codex](https://github.com/openai/codex) 的 Agent）负责 PR 实现，Claude Code 做 review。在 Agent Mesh 之前，Hermes 每次完成工作都要写 22KB 的交接文档，OpenClaw 每次被问到进度都要重新解析。现在：
 
 ```
 Hermes: "我刚 force-push 了 #77540"  →  更新 .mesh/pulse/hermes.json
@@ -221,6 +227,8 @@ OpenClaw: 读 pulse  →  知道 Hermes 在等 CI
 Claude Code: 读 pulse  →  知道不要碰 #77540 区域
 用户: mesh status  →  一眼看到全部
 ```
+
+完整的 [OpenClaw + Hermes 工作流示例](examples/openclaw-hermes/README.md)。
 
 ## 参与贡献
 

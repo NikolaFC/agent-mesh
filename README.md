@@ -10,11 +10,17 @@
 
 You have multiple AI agents working on your codebase:
 - **OpenClaw** orchestrating and managing memory
-- **Codex** doing deep code implementation
+- **Hermes** (Codex-based) implementing features and fixing bugs
 - **Claude Code** reviewing and refactoring
 - **Cursor** in your editor
 
 Each one has its own context window. They can't see each other's progress. You spend more time copying context between agents than actually getting work done.
+
+### How it started
+
+This project was born from a real pain point: OpenClaw uses **Hermes** (a Codex-based agent) to implement upstream PRs. Every time Hermes finished a chunk of work, it would write a 22KB handoff document. OpenClaw had to parse that document, cross-reference with `gh pr view`, and manually piece together the current state. When Satoshi asked "进展怎样?", OpenClaw had to do this dance every single time.
+
+Agent Mesh replaces all of that with `mesh status`.
 
 ## The Solution
 
@@ -172,7 +178,7 @@ Protocol specification: [`PROTOCOL.md`](PROTOCOL.md)
 
 ## Real-World Example
 
-This project was born from a real need: [OpenClaw](https://github.com/openclaw/openclaw) uses multiple agents (OpenClaw main, Hermes/Codex for PRs, Claude Code for review). Before Agent Mesh, progress sync was manual. Now:
+This project was born from a real need: [OpenClaw](https://github.com/openclaw/openclaw) uses multiple agents — **OpenClaw** as the main orchestrator, **Hermes** (a [Codex](https://github.com/openai/codex)-based agent) for PR implementation, and Claude Code for review. Before Agent Mesh, Hermes would write 22KB handoff documents and OpenClaw had to parse them every time someone asked for a status update. Now:
 
 ```
 Hermes: "I just force-pushed #77540"  →  updates .mesh/pulse/hermes.json
@@ -180,6 +186,8 @@ OpenClaw: reads pulse  →  knows Hermes is waiting for CI
 Claude Code: reads pulse  →  knows not to touch #77540 area
 Human: mesh status  →  sees everything at a glance
 ```
+
+See the full [OpenClaw + Hermes workflow example](examples/openclaw-hermes/README.md).
 
 ## Git Hooks
 
