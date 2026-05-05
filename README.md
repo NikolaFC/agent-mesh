@@ -10,7 +10,7 @@
 
 You have multiple AI agents working on your codebase:
 - **OpenClaw** orchestrating and managing memory
-- **Hermes** (Codex-based) implementing features and fixing bugs
+- **Hermes** implementing features, fixing bugs, and handling PRs
 - **Claude Code** reviewing and refactoring
 - **Cursor** in your editor
 
@@ -18,7 +18,9 @@ Each one has its own context window. They can't see each other's progress. You s
 
 ### How it started
 
-This project was born from a real pain point: OpenClaw uses **Hermes** (a Codex-based agent) to implement upstream PRs. Every time Hermes finished a chunk of work, it would write a 22KB handoff document. OpenClaw had to parse that document, cross-reference with `gh pr view`, and manually piece together the current state. When the user asked "How is it going?", OpenClaw had to do this dance every single time.
+This project was born from a real pain point: our setup uses two independent agent systems — **OpenClaw** and **Hermes** — running in parallel on the same machine (WSL). Each has its own gateway, its own session management, and its own memory, but they share the same workspace and coordinate on the same PRs.
+
+Hermes handles upstream PR implementation while OpenClaw manages orchestration and memory. Before Agent Mesh, every time Hermes finished a chunk of work, it would write a 22KB handoff document. OpenClaw had to parse that document, cross-reference with `gh pr view`, and manually piece together the current state. When the user asked "How is it going?", OpenClaw had to do this dance every single time.
 
 Agent Mesh replaces all of that with `mesh status`.
 
@@ -178,7 +180,9 @@ Protocol specification: [`PROTOCOL.md`](PROTOCOL.md)
 
 ## Real-World Example
 
-This project was born from a real need: [OpenClaw](https://github.com/openclaw/openclaw) uses multiple agents — **OpenClaw** as the main orchestrator, **Hermes** (a [Codex](https://github.com/openai/codex)-based agent) for PR implementation, and Claude Code for review. Before Agent Mesh, Hermes would write 22KB handoff documents and OpenClaw had to parse them every time someone asked for a status update. Now:
+This project was born from a real need: our workspace runs two independent agent systems — [OpenClaw](https://github.com/openclaw/openclaw) as the main orchestrator, and **Hermes** as a standalone agent handling PR implementation. Each runs its own gateway on the same WSL machine, sharing the same workspace and memory.
+
+Before Agent Mesh, Hermes would write 22KB handoff documents and OpenClaw had to parse them every time someone asked for a status update. Now:
 
 ```
 Hermes: "I just force-pushed #77540"  →  updates .mesh/pulse/hermes.json
@@ -186,6 +190,10 @@ OpenClaw: reads pulse  →  knows Hermes is waiting for CI
 Claude Code: reads pulse  →  knows not to touch #77540 area
 Human: mesh status  →  sees everything at a glance
 ```
+
+### About Hermes
+
+Hermes is an independent agent framework running its own gateway, session management, and skill system. It shares the workspace with OpenClaw and coordinates via Agent Mesh — each writes its own pulse file, and both read the shared `.mesh/` directory. This peer-to-peer model means either agent can work independently, and Agent Mesh provides the shared awareness layer.
 
 See the full [OpenClaw + Hermes workflow example](examples/openclaw-hermes/README.md).
 

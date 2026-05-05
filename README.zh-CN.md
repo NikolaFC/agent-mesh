@@ -8,7 +8,7 @@
 
 你有多个 AI Agent 在同一个代码库里工作：
 - **OpenClaw** 负责编排和记忆管理
-- **Hermes**（基于 Codex）负责实现功能和修 Bug
+- **Hermes** 负责实现功能、修 Bug 和处理 PR
 - **Claude Code** 做代码审查和重构
 - **Cursor** 在编辑器里
 
@@ -16,7 +16,9 @@
 
 ### 起源
 
-这个项目诞生于真实痛点：OpenClaw 用 **Hermes**（一个基于 Codex 的 Agent）来实现上游 PR。每次 Hermes 完成一段工作，会写一份 22KB 的交接文档。OpenClaw 要解析这份文档，用 `gh pr view` 交叉验证，然后手动拼出当前状态。每次用户问"进展怎样？"，OpenClaw 都要重复这套流程。
+这个项目诞生于真实痛点：我们的工作区跑着两个独立的 Agent 系统——**OpenClaw** 和 **Hermes**，都在同一台 WSL 机器上，各自有自己的 Gateway、会话管理和记忆系统，但共享同一个工作区，在同一个 PR 上协作。
+
+Hermes 负责上游 PR 实现，OpenClaw 负责编排和记忆管理。每次 Hermes 完成一段工作，会写一份 22KB 的交接文档。OpenClaw 要解析这份文档，用 `gh pr view` 交叉验证，然后手动拼出当前状态。每次用户问"进展怎样？"，OpenClaw 都要重复这套流程。
 
 Agent Mesh 用一条 `mesh status` 取代了这一切。
 
@@ -219,7 +221,9 @@ python3 tests/test_cli.py
 
 ## 实际案例
 
-这个项目诞生于真实需求：[OpenClaw](https://github.com/openclaw/openclaw) 使用多个 Agent——**OpenClaw** 作为主编排器，**Hermes**（基于 [Codex](https://github.com/openai/codex) 的 Agent）负责 PR 实现，Claude Code 做 review。在 Agent Mesh 之前，Hermes 每次完成工作都要写 22KB 的交接文档，OpenClaw 每次被问到进度都要重新解析。现在：
+这个项目诞生于真实需求：我们的工作区跑着两个独立的 Agent 系统——[OpenClaw](https://github.com/openclaw/openclaw) 作为主编排器，**Hermes** 作为独立 Agent 负责 PR 实现。各自运行自己的 Gateway，共享同一个工作区和记忆。
+
+在 Agent Mesh 之前，Hermes 每次完成工作都要写 22KB 的交接文档，OpenClaw 每次被问到进度都要重新解析。现在：
 
 ```
 Hermes: "我刚 force-push 了 #77540"  →  更新 .mesh/pulse/hermes.json
@@ -227,6 +231,10 @@ OpenClaw: 读 pulse  →  知道 Hermes 在等 CI
 Claude Code: 读 pulse  →  知道不要碰 #77540 区域
 用户: mesh status  →  一眼看到全部
 ```
+
+### 关于 Hermes
+
+Hermes 是一个独立的 Agent 框架，运行自己的 Gateway、会话管理和技能系统。它与 OpenClaw 共享工作区，通过 Agent Mesh 协调——各自写自己的 pulse 文件，共同读取共享的 `.mesh/` 目录。这种对等模式意味着任一 Agent 都能独立运作，Agent Mesh 提供共享的感知层。
 
 完整的 [OpenClaw + Hermes 工作流示例](examples/openclaw-hermes/README.md)。
 
