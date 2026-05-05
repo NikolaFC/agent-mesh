@@ -1044,6 +1044,38 @@ def cmd_evolution_log(args):
             write_text(evo_file, compact_content)
             info(f"  ✅ Auto-compacted: {len(to_archive)} archived, {len(to_keep)} kept")
 
+    # Auto-index if enabled
+    config = load_mesh_config(root)
+    idx_cfg = config.get("evolution", {}).get("index", {})
+    if idx_cfg.get("enabled") and idx_cfg.get("autoIndex"):
+        idx_rel = idx_cfg.get("path", ".mesh/shared/evolution/index.jsonl")
+        idx_path = root / idx_rel
+        idx_path.parent.mkdir(parents=True, exist_ok=True)
+        # Re-read all evolution files and rebuild index
+        all_entries = []
+        for ef in collect_evolution_files(paths):
+            agent_name = ef.stem
+            evo_content = read_text(ef)
+            for chunk in evo_content.split("\n## ["):
+                if "]" not in chunk:
+                    continue
+                ts_rest = chunk.split("]", 1)
+                ts_str = ts_rest[0].strip()
+                rest = ts_rest[1].strip() if len(ts_rest) > 1 else ""
+                cat = ""
+                fc = ""
+                if " — " in rest:
+                    hp, sm = rest.split("\n", 1) if "\n" in rest else (rest, "")
+                    ps = hp.split(" — ", 1)
+                    cat = ps[0].strip()
+                    fc = ps[1].strip() if len(ps) > 1 else ""
+                else:
+                    sm = rest
+                all_entries.append({"agent": agent_name, "timestamp": ts_str, "category": cat, "file": fc, "summary": sm.strip()[:500]})
+        with idx_path.open("w", encoding="utf-8") as out:
+            for e in all_entries:
+                out.write(json.dumps(e, ensure_ascii=False) + "\n")
+
 
 def cmd_evolution_read(args):
     root = require_mesh_root()
@@ -1187,9 +1219,11 @@ def load_mesh_config(root):
             "rotateThreshold": 200,
             "rotateKeep": 30,
             "index": {
-                "enabled": False,
+                "enabled": True,
+                "experimental": True,
                 "format": "jsonl",
                 "path": ".mesh/shared/evolution/index.jsonl",
+                "autoIndex": True,
             },
         },
     }
@@ -1271,8 +1305,8 @@ def cmd_evolution_index(args):
             out.write(json.dumps(e, ensure_ascii=False) + "\n")
 
     success(f"✅ Indexed {len(entries)} evolution entries → {idx_rel}")
-    if not idx_cfg.get("enabled"):
-        info("💡 Index is disabled by default. Enable in .mesh/config.json or use --output.")
+    if idx_cfg.get("experimental"):
+        info("🔬 Experimental feature — index format may change.")
 
 
 def build_parser():

@@ -263,7 +263,9 @@ Mesh behavior is configurable via `.mesh/config.json`. Run `mesh config` to see 
 | `evolution.autoRotate` | `true` | Auto-compact when log exceeds threshold |
 | `evolution.rotateThreshold` | `200` | Line count trigger for auto-rotation |
 | `evolution.rotateKeep` | `30` | Entries to keep after auto-rotation |
-| `evolution.index.enabled` | `false` | Enable JSONL index generation |
+| `evolution.index.enabled` | `true` | Enable JSONL index generation |
+| `evolution.index.experimental` | `true` | Mark as experimental (format may change) |
+| `evolution.index.autoIndex` | `true` | Auto-rebuild index on every log entry |
 | `evolution.index.format` | `jsonl` | Index format (jsonl) |
 | `evolution.index.path` | `.mesh/shared/evolution/index.jsonl` | Index output path |
 
