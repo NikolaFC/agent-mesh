@@ -636,8 +636,193 @@ def cmd_validate(_args):
     success("✅ Validation passed")
 
 
-def cmd_sync(_args):
-    print("sync not yet implemented")
+def gh_json(args_str):
+    """Run gh CLI and return parsed JSON, or None on failure."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            f"gh {args_str}",
+            shell=True, capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode != 0:
+            warn(f"gh failed: {r.stderr.strip()}")
+            return None
+        return json.loads(r.stdout)
+    except (json.JSONDecodeError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+        warn(f"gh error: {e}")
+        return None
+
+
+def gh_pr_to_mesh_status(ci_status, is_merged, is_draft, review_decision):
+    """Map GitHub PR state to mesh task status."""
+    if is_merged:
+        return "merged"
+    if ci_status == "FAILURE":
+        return "ci-fail"
+    if ci_status == "SUCCESS":
+        return "ci-pass"
+    if review_decision == "APPROVED":
+        return "review"
+    if is_draft:
+        return "open"
+    return "in-progress"
+
+
+def gh_estimate_progress(ci_status, review_decision):
+    """Estimate progress from CI + review state."""
+    p = 0.3
+    if ci_status == "SUCCESS":
+        p += 0.4
+    elif ci_status == "FAILURE":
+        p += 0.1
+    if review_decision == "APPROVED":
+        p += 0.2
+    elif review_decision == "CHANGES_REQUESTED":
+        p += 0.05
+    return round(min(p, 1.0), 2)
+
+
+def cmd_sync(args):
+    repo = args.repo
+    if not repo:
+        import subprocess
+        try:
+            r = subprocess.run(
+                "gh repo view --json nameWithOwner -q .nameWithOwner",
+                shell=True, capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                repo = r.stdout.strip()
+        except Exception:
+            pass
+    if not repo:
+        die("Could not detect repo. Use --repo owner/name.")
+
+    info(f"📡 Syncing from {repo}...")
+
+    # Fetch open PRs
+    prs = gh_json(
+        f"pr list --repo {repo} --state open --limit 100 "
+        "--json number,title,state,isDraft,reviewDecision,statusCheckRollup,author,headRefName"
+    )
+    if prs is None:
+        die("Failed to fetch PRs from GitHub.")
+
+    # Fetch recently merged PRs (last 7 days)
+    merged_prs = gh_json(
+        f"pr list --repo {repo} --state merged --limit 50 "
+        "--json number,title,state,mergedAt,author"
+    )
+    if merged_prs is None:
+        merged_prs = []
+
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+
+    # Load existing tasks
+    existing = {}
+    for f in collect_task_files(paths, include_archived=False):
+        task = read_json(f)
+        existing[task.get("id", f.stem)] = task
+
+    created, updated, unchanged = 0, 0, 0
+    now = now_iso()
+
+    # Process open PRs
+    for pr in prs:
+        num = pr["number"]
+        task_id = f"pr-{num}"
+        title = pr.get("title", f"PR #{num}")
+
+        # Determine CI status from check rollup
+        checks = pr.get("statusCheckRollup") or []
+        ci_status = "PENDING"
+        if checks:
+            conclusions = [c.get("conclusion") or c.get("status") for c in checks]
+            if "FAILURE" in conclusions:
+                ci_status = "FAILURE"
+            elif all(s == "SUCCESS" for s in conclusions):
+                ci_status = "SUCCESS"
+
+        is_merged = pr.get("state") == "MERGED"
+        is_draft = pr.get("isDraft", False)
+        review_decision = pr.get("reviewDecision") or "pending"
+
+        mesh_status = gh_pr_to_mesh_status(ci_status, is_merged, is_draft, review_decision)
+        progress = gh_estimate_progress(ci_status, review_decision)
+
+        if task_id in existing:
+            task = existing[task_id]
+            old_status = task.get("status")
+            if old_status != mesh_status:
+                task["status"] = mesh_status
+                task["progress"] = progress
+                task["updatedAt"] = now
+                history = task.get("history", [])
+                history.append({
+                    "agent": "mesh-sync",
+                    "action": "validated",
+                    "summary": f"GitHub sync: {old_status} → {mesh_status} (CI: {ci_status}, review: {review_decision})",
+                    "at": now,
+                })
+                task["history"] = history
+                write_json(paths["active"] / f"{task_id}.json", task)
+                updated += 1
+                info(f"  📝 {task_id}: {old_status} → {mesh_status}")
+            else:
+                unchanged += 1
+        else:
+            # New task from GitHub
+            task = {
+                "schema": TASK_SCHEMA_ID,
+                "id": task_id,
+                "type": "upstream-pr",
+                "title": title,
+                "status": mesh_status,
+                "verdict": "pending",
+                "priority": "medium",
+                "assignedTo": pr.get("author", {}).get("login", "unknown"),
+                "createdAt": now,
+                "updatedAt": now,
+                "progress": progress,
+                "links": {
+                    "github": f"https://github.com/{repo}/pull/{num}",
+                },
+                "history": [{
+                    "agent": "mesh-sync",
+                    "action": "created",
+                    "summary": f"Auto-discovered from GitHub: {title}",
+                    "at": now,
+                }],
+            }
+            write_json(paths["active"] / f"{task_id}.json", task)
+            created += 1
+            info(f"  ✨ {task_id}: {mesh_status} — {title}")
+
+    # Process merged PRs → mark existing tasks as merged
+    for pr in merged_prs:
+        num = pr["number"]
+        task_id = f"pr-{num}"
+        if task_id in existing:
+            task = existing[task_id]
+            if task.get("status") != "merged":
+                old_status = task["status"]
+                task["status"] = "merged"
+                task["progress"] = 1.0
+                task["updatedAt"] = now
+                history = task.get("history", [])
+                history.append({
+                    "agent": "mesh-sync",
+                    "action": "merged",
+                    "summary": "PR merged on GitHub",
+                    "at": now,
+                })
+                task["history"] = history
+                write_json(paths["active"] / f"{task_id}.json", task)
+                updated += 1
+                info(f"  🔀 {task_id}: {old_status} → merged")
+
+    success(f"\n✅ Sync complete: {created} created, {updated} updated, {unchanged} unchanged")
 
 
 def build_parser():
@@ -719,7 +904,8 @@ def build_parser():
     p_validate = sub.add_parser("validate", help="Validate all pulse/task JSON files")
     p_validate.set_defaults(func=cmd_validate)
 
-    p_sync = sub.add_parser("sync", help="Sync from external sources (stub)")
+    p_sync = sub.add_parser("sync", help="Sync PR status from GitHub")
+    p_sync.add_argument("--repo", help="GitHub repo (owner/name). Auto-detects from git remote if omitted.")
     p_sync.set_defaults(func=cmd_sync)
 
     return parser
