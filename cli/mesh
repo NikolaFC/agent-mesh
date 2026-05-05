@@ -1176,6 +1176,105 @@ def cmd_evolution_compact(args):
     success(f"✅ Compacted {args.agent}: {len(to_archive)} entries archived, {len(to_keep)} kept")
 
 
+# ── Config ────────────────────────────────────────────────────
+
+def load_mesh_config(root):
+    """Load .mesh/config.json, return defaults if missing."""
+    config_path = root / ".mesh" / "config.json"
+    defaults = {
+        "evolution": {
+            "autoRotate": True,
+            "rotateThreshold": 200,
+            "rotateKeep": 30,
+            "index": {
+                "enabled": False,
+                "format": "jsonl",
+                "path": ".mesh/shared/evolution/index.jsonl",
+            },
+        },
+    }
+    if not config_path.exists():
+        return defaults
+    try:
+        with config_path.open("r", encoding="utf-8") as f:
+            user = json.load(f)
+        def merge(base, override):
+            for k, v in override.items():
+                if k in base and isinstance(base[k], dict) and isinstance(v, dict):
+                    merge(base[k], v)
+                else:
+                    base[k] = v
+        merge(defaults, user)
+        return defaults
+    except (json.JSONDecodeError, OSError) as e:
+        warn(f"Failed to read config.json: {e}, using defaults")
+        return defaults
+
+
+def cmd_config_show(_args):
+    root = require_mesh_root()
+    config = load_mesh_config(root)
+    print(json.dumps(config, indent=2, ensure_ascii=False))
+
+
+# ── Evolution Index ───────────────────────────────────────────
+
+def cmd_evolution_index(args):
+    """Generate a searchable JSONL index from evolution logs."""
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    config = load_mesh_config(root)
+
+    evo_files = collect_evolution_files(paths)
+    if not evo_files:
+        warn("No evolution logs to index.")
+        return
+
+    idx_cfg = config.get("evolution", {}).get("index", {})
+    idx_rel = args.output or idx_cfg.get("path", ".mesh/shared/evolution/index.jsonl")
+    idx_path = root / idx_rel if not Path(idx_rel).is_absolute() else Path(idx_rel)
+    idx_path.parent.mkdir(parents=True, exist_ok=True)
+
+    entries = []
+    for f in evo_files:
+        agent = f.stem
+        content = read_text(f)
+        chunks = content.split("\n## [")
+        for chunk in chunks[1:]:
+            if "]" not in chunk:
+                continue
+            ts_rest = chunk.split("]", 1)
+            ts_str = ts_rest[0].strip()
+            rest = ts_rest[1].strip() if len(ts_rest) > 1 else ""
+
+            category = ""
+            file_changed = ""
+            if " — " in rest:
+                header_part, summary = rest.split("\n", 1) if "\n" in rest else (rest, "")
+                parts = header_part.split(" — ", 1)
+                category = parts[0].strip()
+                file_changed = parts[1].strip() if len(parts) > 1 else ""
+            else:
+                summary = rest
+
+            entry = {
+                "agent": agent,
+                "timestamp": ts_str,
+                "category": category,
+                "file": file_changed,
+                "summary": summary.strip()[:500],
+            }
+            entries.append(entry)
+
+    with idx_path.open("w", encoding="utf-8") as out:
+        for e in entries:
+            out.write(json.dumps(e, ensure_ascii=False) + "\n")
+
+    success(f"✅ Indexed {len(entries)} evolution entries → {idx_rel}")
+    if not idx_cfg.get("enabled"):
+        info("💡 Index is disabled by default. Enable in .mesh/config.json or use --output.")
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="mesh", description="Agent Mesh CLI")
     sub = parser.add_subparsers(dest="command")
@@ -1307,6 +1406,13 @@ def build_parser():
     p_evo_compact.add_argument("--agent", required=True, help="Agent name")
     p_evo_compact.add_argument("--keep", type=int, default=20, help="Entries to keep (default: 20)")
     p_evo_compact.set_defaults(func=cmd_evolution_compact)
+
+    p_evo_index = evo_sub.add_parser("index", help="Generate searchable JSONL index")
+    p_evo_index.add_argument("--output", "-o", help="Output path (default from config)")
+    p_evo_index.set_defaults(func=cmd_evolution_index)
+
+    p_config = sub.add_parser("config", help="Show mesh configuration")
+    p_config.set_defaults(func=cmd_config_show)
 
     return parser
 

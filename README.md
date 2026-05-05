@@ -133,6 +133,8 @@ export MESH_ROOT=/path/to/project/root
 | `mesh evolution read` | Read agent evolution logs |
 | `mesh evolution sync` | Check other agents' recent changes |
 | `mesh evolution compact` | Compact log, archive old entries |
+| `mesh evolution index` | Generate searchable JSONL index |
+| `mesh config` | Show mesh configuration |
 
 ## Agent Integration
 
@@ -236,6 +238,34 @@ python3 tests/test_cli.py
 ```
 
 46 tests covering: init, pulse CRUD, task lifecycle, assign, search, shared files, validate, export, pulse clean, MESH_ROOT env, schema validation.
+
+## Configuration
+
+Mesh behavior is configurable via `.mesh/config.json`. Run `mesh config` to see current settings.
+
+```json
+{
+  "evolution": {
+    "autoRotate": true,
+    "rotateThreshold": 200,
+    "rotateKeep": 30,
+    "index": {
+      "enabled": false,
+      "format": "jsonl",
+      "path": ".mesh/shared/evolution/index.jsonl"
+    }
+  }
+}
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `evolution.autoRotate` | `true` | Auto-compact when log exceeds threshold |
+| `evolution.rotateThreshold` | `200` | Line count trigger for auto-rotation |
+| `evolution.rotateKeep` | `30` | Entries to keep after auto-rotation |
+| `evolution.index.enabled` | `false` | Enable JSONL index generation |
+| `evolution.index.format` | `jsonl` | Index format (jsonl) |
+| `evolution.index.path` | `.mesh/shared/evolution/index.jsonl` | Index output path |
 
 ## Evolution: Shared Identity & Mutual Learning
 
