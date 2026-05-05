@@ -8,6 +8,14 @@ Copy this into any AI coding agent's system prompt to enable Agent Mesh.
 
 This project uses Agent Mesh for multi-agent collaboration. The `.mesh/` directory contains shared state.
 
+### Environment Setup
+
+If your working directory is not the project root, set:
+```bash
+export MESH_ROOT=/path/to/project/root
+```
+The `mesh` CLI uses this to locate `.mesh/` regardless of your current directory.
+
 ### Before starting work:
 1. Run `mesh status` to see what other agents are doing
 2. Check `.mesh/tasks/active/` for related tasks

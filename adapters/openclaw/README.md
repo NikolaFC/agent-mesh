@@ -7,6 +7,11 @@ Add this to your OpenClaw agent's system prompt (AGENTS.md or SOUL.md):
 ```markdown
 ## Agent Mesh Integration
 
+Set `MESH_ROOT` so `mesh` CLI finds `.mesh/` from any directory:
+```bash
+export MESH_ROOT=/home/nikolafc/.openclaw/workspace
+```
+
 Before starting any task, check for .mesh/ in the workspace:
 1. Read `.mesh/pulse/*.json` to see what other agents are doing
 2. Read `.mesh/tasks/active/*.json` for current work items
