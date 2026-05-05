@@ -1016,6 +1016,34 @@ def cmd_evolution_log(args):
     append_text(evo_file, block)
     success(f"✅ Logged evolution for {args.agent}: {category} — {file_changed}")
 
+    # Auto-rotate if file exceeds 200 lines
+    line_count = sum(1 for _ in evo_file.open("r", encoding="utf-8"))
+    if line_count > 200:
+        info(f"📁 Evolution log exceeds 200 lines, auto-compacting...")
+        # Inline compact: keep last 30 entries
+        content = read_text(evo_file)
+        entries = content.split("\n## [")
+        header = entries[0]
+        body_entries = entries[1:]
+        keep = 30
+        if len(body_entries) > keep:
+            to_archive = body_entries[:-keep]
+            to_keep = body_entries[-keep:]
+            archive_dir = paths["evolution"] / "archive"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            a_stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
+            archive_file = archive_dir / f"{args.agent}-{a_stamp}.md"
+            archived_content = f"# Archived Evolution: {args.agent}\n\nAuto-compacted on {now_iso()}. {len(to_archive)} entries.\n\n"
+            archived_content += "\n## [".join(to_archive)
+            if archive_file.exists():
+                archived_content = read_text(archive_file) + "\n\n---\n\n" + archived_content
+            write_text(archive_file, archived_content)
+            compact_content = header
+            compact_content += f"\n> Auto-compacted on {now_iso()}. {len(to_archive)} entries archived to `archive/{archive_file.name}`.\n"
+            compact_content += "\n## [" + "\n## [".join(to_keep)
+            write_text(evo_file, compact_content)
+            info(f"  ✅ Auto-compacted: {len(to_archive)} archived, {len(to_keep)} kept")
+
 
 def cmd_evolution_read(args):
     root = require_mesh_root()
@@ -1101,6 +1129,51 @@ def cmd_evolution_sync(args):
             lines = entry.strip().split("\n")
             category_line = lines[0] if lines else ""
             print(f"    • [{category_line[:80]}]")
+
+
+def cmd_evolution_compact(args):
+    """Compact an agent's evolution log: archive old entries, keep recent N."""
+    if not is_agent_name(args.agent):
+        die("Invalid agent name. Use lowercase letters, digits, and hyphens.")
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    evo_dir = paths["evolution"]
+    evo_file = evo_dir / f"{args.agent}.md"
+    if not evo_file.exists():
+        die(f"No evolution log for agent '{args.agent}'.")
+
+    content = read_text(evo_file)
+    entries = content.split("\n## [")
+    header = entries[0]
+    body_entries = entries[1:]
+
+    keep = args.keep or 20
+    if len(body_entries) <= keep:
+        info(f"Only {len(body_entries)} entries, nothing to compact.")
+        return
+
+    to_archive = body_entries[:-keep]
+    to_keep = body_entries[-keep:]
+
+    # Write archived entries
+    archive_dir = evo_dir / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
+    archive_file = archive_dir / f"{args.agent}-{stamp}.md"
+
+    archived_content = f"# Archived Evolution: {args.agent}\n\nCompacted on {now_iso()}. {len(to_archive)} entries archived.\n\n"
+    archived_content += "\n## [".join(to_archive)
+    if archive_file.exists():
+        archived_content = read_text(archive_file) + "\n\n---\n\n" + archived_content
+    write_text(archive_file, archived_content)
+
+    # Write compacted file
+    compact_content = header
+    compact_content += f"\n> Compacted on {now_iso()}. {len(to_archive)} entries archived to `archive/{archive_file.name}`. Showing last {keep}.\n"
+    compact_content += "\n## [" + "\n## [".join(to_keep)
+    write_text(evo_file, compact_content)
+
+    success(f"✅ Compacted {args.agent}: {len(to_archive)} entries archived, {len(to_keep)} kept")
 
 
 def build_parser():
@@ -1229,6 +1302,11 @@ def build_parser():
     p_evo_sync.add_argument("--my-agent", required=True, help="Your agent name (to exclude from results)")
     p_evo_sync.add_argument("--since-hours", type=int, default=168, help="Look back N hours (default: 168 = 7 days)")
     p_evo_sync.set_defaults(func=cmd_evolution_sync)
+
+    p_evo_compact = evo_sub.add_parser("compact", help="Compact evolution log, archive old entries")
+    p_evo_compact.add_argument("--agent", required=True, help="Agent name")
+    p_evo_compact.add_argument("--keep", type=int, default=20, help="Entries to keep (default: 20)")
+    p_evo_compact.set_defaults(func=cmd_evolution_compact)
 
     return parser
 

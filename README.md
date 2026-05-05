@@ -132,6 +132,7 @@ export MESH_ROOT=/path/to/project/root
 | `mesh evolution log` | Log an identity/preference/SOP change |
 | `mesh evolution read` | Read agent evolution logs |
 | `mesh evolution sync` | Check other agents' recent changes |
+| `mesh evolution compact` | Compact log, archive old entries |
 
 ## Agent Integration
 
