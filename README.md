@@ -4,6 +4,8 @@
 
 > When you use OpenClaw + Codex + Claude Code on the same project, each agent is an island. Agent Mesh is the bridge.
 
+[中文文档](README.zh-CN.md)
+
 ## The Problem
 
 You have multiple AI agents working on your codebase:
