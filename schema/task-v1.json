@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent-mesh/task/v1",
+  "title": "Agent Mesh Task",
+  "description": "A tracked work item in the agent mesh",
+  "type": "object",
+  "required": ["schema", "id", "type", "title", "status", "assignedTo", "createdAt", "updatedAt"],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "agent-mesh/task/v1"
+    },
+    "id": {
+      "type": "string",
+      "description": "Unique task identifier (URL-safe)",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "type": {
+      "type": "string",
+      "enum": ["upstream-pr", "feature", "bugfix", "investigation", "refactor", "docs", "ops", "research"]
+    },
+    "title": {
+      "type": "string",
+      "description": "Short human-readable title",
+      "maxLength": 200
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed description (optional)"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "in-progress", "blocked", "review", "ci-pass", "ci-fail", "deployed", "merged", "closed", "archived"],
+      "description": "Current task status"
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["ADOPT", "REPAIR", "CLOSE", "pending"],
+      "description": "Decision verdict for PRs or evaluations"
+    },
+    "priority": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low"],
+      "default": "medium"
+    },
+    "assignedTo": {
+      "type": "string",
+      "description": "Agent responsible for this task"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "progress": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Estimated progress (0.0 to 1.0)"
+    },
+    "links": {
+      "type": "object",
+      "description": "External references",
+      "additionalProperties": { "type": "string" }
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "history": {
+      "type": "array",
+      "description": "Append-only event log for this task",
+      "items": {
+        "type": "object",
+        "required": ["agent", "action", "at"],
+        "properties": {
+          "agent": {
+            "type": "string",
+            "description": "Agent that performed this action"
+          },
+          "action": {
+            "type": "string",
+            "enum": ["created", "started", "committed", "repaired", "validated", "deployed", "merged", "closed", "commented", "blocked", "unblocked", "tested", "reviewed"]
+          },
+          "summary": {
+            "type": "string",
+            "description": "Brief description"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ref": {
+            "type": "string",
+            "description": "Optional reference (commit, PR, URL)"
+          }
+        }
+      }
+    }
+  }
+}

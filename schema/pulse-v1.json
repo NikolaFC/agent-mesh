@@ -1,0 +1,115 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "agent-mesh/pulse/v1",
+  "title": "Agent Mesh Pulse",
+  "description": "Real-time heartbeat for an AI coding agent",
+  "type": "object",
+  "required": ["schema", "agent", "lastUpdate", "status"],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "agent-mesh/pulse/v1"
+    },
+    "agent": {
+      "type": "string",
+      "description": "Unique agent identifier (lowercase, hyphens allowed)",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "agentType": {
+      "type": "string",
+      "description": "Agent runtime/platform type",
+      "enum": ["openclaw", "codex", "claude-code", "cursor", "windsurf", "devin", "gemini", "custom"]
+    },
+    "lastUpdate": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last pulse update"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["idle", "working", "blocked", "reviewing", "done"],
+      "description": "Current agent status"
+    },
+    "currentTask": {
+      "type": "object",
+      "description": "Task the agent is currently working on (omit if idle)",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Task ID from .mesh/tasks/"
+        },
+        "title": {
+          "type": "string",
+          "description": "Short human-readable task title"
+        },
+        "progress": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Estimated progress (0.0 to 1.0)"
+        }
+      },
+      "required": ["id"]
+    },
+    "recentActions": {
+      "type": "array",
+      "description": "Recent significant actions (keep last 5-10)",
+      "items": {
+        "type": "object",
+        "required": ["type", "at"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["commit", "pr-created", "pr-updated", "ci-pass", "ci-fail", "deploy", "test", "review", "blocked", "unblocked", "note"]
+          },
+          "ref": {
+            "type": "string",
+            "description": "Reference (commit hash, PR number, etc.)"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Brief description of what happened"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "maxItems": 10
+    },
+    "blockers": {
+      "type": "array",
+      "description": "Current blockers preventing progress",
+      "items": {
+        "type": "object",
+        "required": ["description"],
+        "properties": {
+          "description": { "type": "string" },
+          "since": { "type": "string", "format": "date-time" },
+          "needsHuman": { "type": "boolean", "default": false }
+        }
+      }
+    },
+    "nextActions": {
+      "type": "array",
+      "description": "Planned next steps",
+      "items": { "type": "string" },
+      "maxItems": 5
+    },
+    "contextChanges": {
+      "type": "array",
+      "description": "Changes to shared context that other agents should know about",
+      "items": {
+        "type": "object",
+        "required": ["file", "summary"],
+        "properties": {
+          "file": { "type": "string" },
+          "summary": { "type": "string" }
+        }
+      }
+    }
+  }
+}
