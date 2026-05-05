@@ -393,6 +393,7 @@ def cmd_pulse_update(args):
 
     write_json(pulse_file, data)
     success(f"✅ Updated pulse for {args.agent}")
+    rebuild_indexes(root, paths)
 
 
 def cmd_pulse_check(_args):
@@ -471,6 +472,7 @@ def cmd_task_create(args):
     }
     write_json(task_file, task)
     success(f"✅ Created task {args.id}")
+    rebuild_indexes(root, paths)
 
 
 def cmd_task_update(args):
@@ -503,6 +505,7 @@ def cmd_task_update(args):
     task["updatedAt"] = now_iso()
     write_json(task_file, task)
     success(f"✅ Updated task {args.id}")
+    rebuild_indexes(root, paths)
 
 
 def cmd_task_history(args):
@@ -532,6 +535,7 @@ def cmd_task_history(args):
 
     write_json(task_file, task)
     success(f"✅ Added history entry to {args.id}")
+    rebuild_indexes(root, paths)
 
 
 def cmd_task_list(args):
@@ -578,6 +582,7 @@ def cmd_task_archive(args):
     write_json(src, task)
     src.rename(dst)
     success(f"✅ Archived task {args.id}")
+    rebuild_indexes(root, paths)
 
 
 def resolve_shared_file(paths, value):
@@ -638,6 +643,7 @@ def cmd_task_assign(args):
     task["history"] = history
     write_json(task_file, task)
     success(f"✅ Reassigned {args.id}: {old} → {args.agent}")
+    rebuild_indexes(root, paths)
 
 
 def cmd_task_search(args):
@@ -1226,6 +1232,24 @@ def load_mesh_config(root):
                 "autoIndex": True,
             },
         },
+        "tasks": {
+            "index": {
+                "enabled": True,
+                "experimental": True,
+                "format": "jsonl",
+                "path": ".mesh/tasks/index.jsonl",
+                "autoIndex": True,
+            },
+        },
+        "pulses": {
+            "index": {
+                "enabled": True,
+                "experimental": True,
+                "format": "jsonl",
+                "path": ".mesh/pulse/index.jsonl",
+                "autoIndex": True,
+            },
+        },
     }
     if not config_path.exists():
         return defaults
@@ -1243,6 +1267,96 @@ def load_mesh_config(root):
     except (json.JSONDecodeError, OSError) as e:
         warn(f"Failed to read config.json: {e}, using defaults")
         return defaults
+
+
+def rebuild_indexes(root, paths):
+    """Rebuild all enabled indexes (tasks, pulses, evolution)."""
+    config = load_mesh_config(root)
+    now = now_iso()
+
+    # Tasks index
+    t_cfg = config.get("tasks", {}).get("index", {})
+    if t_cfg.get("enabled") and t_cfg.get("autoIndex"):
+        idx_path = root / t_cfg.get("path", ".mesh/tasks/index.jsonl")
+        idx_path.parent.mkdir(parents=True, exist_ok=True)
+        entries = []
+        for f in collect_task_files(paths, include_archived=True):
+            t = read_json(f)
+            last_history = t.get("history", [{}])[-1] if t.get("history") else {}
+            entries.append({
+                "id": t.get("id"),
+                "type": t.get("type"),
+                "title": t.get("title", "")[:200],
+                "status": t.get("status"),
+                "verdict": t.get("verdict"),
+                "priority": t.get("priority"),
+                "assignedTo": t.get("assignedTo"),
+                "progress": t.get("progress", 0),
+                "updatedAt": t.get("updatedAt"),
+                "lastAction": last_history.get("action"),
+                "lastSummary": last_history.get("summary", "")[:200],
+            })
+        with idx_path.open("w", encoding="utf-8") as out:
+            for e in entries:
+                out.write(json.dumps(e, ensure_ascii=False) + "\n")
+
+    # Pulses index
+    p_cfg = config.get("pulses", {}).get("index", {})
+    if p_cfg.get("enabled") and p_cfg.get("autoIndex"):
+        idx_path = root / p_cfg.get("path", ".mesh/pulse/index.jsonl")
+        idx_path.parent.mkdir(parents=True, exist_ok=True)
+        entries = []
+        for f in collect_pulse_files(paths):
+            p = read_json(f)
+            last_action = p.get("recentActions", [{}])[-1] if p.get("recentActions") else {}
+            entries.append({
+                "agent": p.get("agent"),
+                "status": p.get("status"),
+                "currentTask": (p.get("currentTask") or {}).get("id"),
+                "lastUpdate": p.get("lastUpdate"),
+                "lastSummary": last_action.get("summary", "")[:200],
+            })
+        with idx_path.open("w", encoding="utf-8") as out:
+            for e in entries:
+                out.write(json.dumps(e, ensure_ascii=False) + "\n")
+
+
+def cmd_index(_args):
+    """Manually rebuild all indexes."""
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    rebuild_indexes(root, paths)
+    # Also rebuild evolution index
+    config = load_mesh_config(root)
+    evo_cfg = config.get("evolution", {}).get("index", {})
+    if evo_cfg.get("enabled"):
+        evo_files = collect_evolution_files(paths)
+        idx_path = root / evo_cfg.get("path", ".mesh/shared/evolution/index.jsonl")
+        idx_path.parent.mkdir(parents=True, exist_ok=True)
+        entries = []
+        for f in evo_files:
+            agent = f.stem
+            content = read_text(f)
+            for chunk in content.split("\n## ["):
+                if "]" not in chunk:
+                    continue
+                ts_rest = chunk.split("]", 1)
+                ts_str = ts_rest[0].strip()
+                rest = ts_rest[1].strip() if len(ts_rest) > 1 else ""
+                cat = ""
+                fc = ""
+                if " — " in rest:
+                    hp, sm = rest.split("\n", 1) if "\n" in rest else (rest, "")
+                    ps = hp.split(" — ", 1)
+                    cat = ps[0].strip()
+                    fc = ps[1].strip() if len(ps) > 1 else ""
+                else:
+                    sm = rest
+                entries.append({"agent": agent, "timestamp": ts_str, "category": cat, "file": fc, "summary": sm.strip()[:500]})
+        with idx_path.open("w", encoding="utf-8") as out:
+            for e in entries:
+                out.write(json.dumps(e, ensure_ascii=False) + "\n")
+    success("✅ All indexes rebuilt")
 
 
 def cmd_config_show(_args):
@@ -1447,6 +1561,9 @@ def build_parser():
 
     p_config = sub.add_parser("config", help="Show mesh configuration")
     p_config.set_defaults(func=cmd_config_show)
+
+    p_index = sub.add_parser("index", help="Rebuild all indexes (tasks, pulses, evolution)")
+    p_index.set_defaults(func=cmd_index)
 
     return parser
 

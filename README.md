@@ -135,6 +135,7 @@ export MESH_ROOT=/path/to/project/root
 | `mesh evolution compact` | Compact log, archive old entries |
 | `mesh evolution index` | Generate searchable JSONL index |
 | `mesh config` | Show mesh configuration |
+| `mesh index` | Rebuild all indexes (tasks, pulses, evolution) |
 
 ## Agent Integration
 
@@ -249,25 +250,32 @@ Mesh behavior is configurable via `.mesh/config.json`. Run `mesh config` to see 
     "autoRotate": true,
     "rotateThreshold": 200,
     "rotateKeep": 30,
-    "index": {
-      "enabled": false,
-      "format": "jsonl",
-      "path": ".mesh/shared/evolution/index.jsonl"
-    }
+    "index": { "enabled": true, "experimental": true, "autoIndex": true, "format": "jsonl", "path": ".mesh/shared/evolution/index.jsonl" }
+  },
+  "tasks": {
+    "index": { "enabled": true, "experimental": true, "autoIndex": true, "format": "jsonl", "path": ".mesh/tasks/index.jsonl" }
+  },
+  "pulses": {
+    "index": { "enabled": true, "experimental": true, "autoIndex": true, "format": "jsonl", "path": ".mesh/pulse/index.jsonl" }
   }
 }
 ```
 
+All three index types:
+- **tasks** — every task (id, title, status, verdict, assignee, progress, last action)
+- **pulses** — every agent pulse (agent, status, current task, last update)
+- **evolution** — every identity/SOP change (agent, category, file, summary)
+
+Indexes are auto-rebuilt on every write. Disable per-type via `"autoIndex": false`. All marked `experimental`.
+
 | Option | Default | Description |
 |--------|---------|-------------|
+| `*.index.enabled` | `true` | Enable JSONL index generation |
+| `*.index.experimental` | `true` | Mark as experimental (format may change) |
+| `*.index.autoIndex` | `true` | Auto-rebuild index on every mutation |
 | `evolution.autoRotate` | `true` | Auto-compact when log exceeds threshold |
 | `evolution.rotateThreshold` | `200` | Line count trigger for auto-rotation |
 | `evolution.rotateKeep` | `30` | Entries to keep after auto-rotation |
-| `evolution.index.enabled` | `true` | Enable JSONL index generation |
-| `evolution.index.experimental` | `true` | Mark as experimental (format may change) |
-| `evolution.index.autoIndex` | `true` | Auto-rebuild index on every log entry |
-| `evolution.index.format` | `jsonl` | Index format (jsonl) |
-| `evolution.index.path` | `.mesh/shared/evolution/index.jsonl` | Index output path |
 
 ## Evolution: Shared Identity & Mutual Learning
 
