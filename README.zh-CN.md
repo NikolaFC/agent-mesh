@@ -131,6 +131,9 @@ export MESH_ROOT=/path/to/project/root
 | `mesh shared update` | 替换共享文件内容 |
 | `mesh validate` | 校验所有 .mesh 文件 |
 | `mesh sync [--repo]` | 从 GitHub 同步 PR 状态 |
+| `mesh evolution log` | 记录身份/偏好/SOP 变更 |
+| `mesh evolution read` | 读取 agent 进化日志 |
+| `mesh evolution sync` | 查看其他 agent 的最近变更 |
 
 ## Agent 集成
 
@@ -237,6 +240,25 @@ Claude Code: 读 pulse  →  知道不要碰 #77540 区域
 Hermes 是一个独立的 Agent 框架，运行自己的 Gateway、会话管理和技能系统。它与 OpenClaw 共享工作区，通过 Agent Mesh 协调——各自写自己的 pulse 文件，共同读取共享的 `.mesh/` 目录。这种对等模式意味着任一 Agent 都能独立运作，Agent Mesh 提供共享的感知层。
 
 完整的 [OpenClaw + Hermes 工作流示例](examples/openclaw-hermes/README.md)。
+
+## 进化日志：共享身份与互相学习
+
+除了任务协调，Agent Mesh 还支持**进化日志**——agent 之间分享自我学习成果的机制。
+
+当 agent 修改核心文件（AGENTS.md、USER.md、SOUL.md、SOP）时，把变更记录到 `.mesh/shared/evolution/{agent}.md`。其他 agent 可以主动查阅，选择性吸收有用的发现。
+
+```bash
+# 记录一次变更
+mesh evolution log --agent hermes --file AGENTS.md --category sop --summary "新增 mesh 工作流技能"
+
+# 读取其他 agent 的进化记录
+mesh evolution read --agent hermes
+
+# 查看所有 agent 最近的变更
+mesh evolution sync --my-agent openclaw --since-hours 48
+```
+
+这不是每次 mesh 交互都要读的内容——它是一个被动日志，agent 在想要学习时主动查阅。
 
 ## 参与贡献
 

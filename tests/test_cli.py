@@ -226,6 +226,53 @@ def test_mesh_root_env():
             shutil.rmtree(other, ignore_errors=True)
 
 
+def test_evolution_log():
+    with test("evolution log + read") as t:
+        rc, _, _ = run(["evolution", "log", "--agent", "hermes", "--file", "AGENTS.md", "--category", "sop", "--summary", "Added mesh workflow"], cwd=t.tmpdir)
+        check(rc == 0, "evolution log succeeds")
+
+        evo_file = Path(t.tmpdir) / ".mesh" / "shared" / "evolution" / "hermes.md"
+        check(evo_file.exists(), "evolution file created")
+
+        rc, out, _ = run(["evolution", "read", "--agent", "hermes"], cwd=t.tmpdir)
+        check(rc == 0, "evolution read succeeds")
+        check("Added mesh workflow" in out, "content matches")
+        check("AGENTS.md" in out, "file name shown")
+
+
+def test_evolution_multiple_entries():
+    with test("evolution multiple entries") as t:
+        run(["evolution", "log", "--agent", "hermes", "--file", "USER.md", "--summary", "Change 1"], cwd=t.tmpdir)
+        run(["evolution", "log", "--agent", "hermes", "--file", "SOUL.md", "--summary", "Change 2"], cwd=t.tmpdir)
+        run(["evolution", "log", "--agent", "openclaw", "--file", "AGENTS.md", "--summary", "Change 3"], cwd=t.tmpdir)
+
+        rc, out, _ = run(["evolution", "read", "--all"], cwd=t.tmpdir)
+        check(rc == 0, "read all succeeds")
+        check("Change 1" in out, "entry 1 present")
+        check("Change 2" in out, "entry 2 present")
+        check("Change 3" in out, "entry 3 present")
+
+        rc, out, _ = run(["evolution", "read", "--agent", "hermes", "--recent", "1"], cwd=t.tmpdir)
+        check(rc == 0, "recent filter works")
+        check("Change 2" in out, "shows most recent")
+
+
+def test_evolution_sync():
+    with test("evolution sync") as t:
+        run(["evolution", "log", "--agent", "hermes", "--file", "AGENTS.md", "--summary", "Hermes learned something"], cwd=t.tmpdir)
+        run(["evolution", "log", "--agent", "openclaw", "--file", "HEARTBEAT.md", "--summary", "OpenClaw learned something"], cwd=t.tmpdir)
+
+        # openclaw sync should see hermes but not itself
+        rc, out, _ = run(["evolution", "sync", "--my-agent", "openclaw"], cwd=t.tmpdir)
+        check(rc == 0, "sync succeeds")
+        check("hermes" in out, "sees hermes")
+
+        # hermes sync should see openclaw but not itself
+        rc, out, _ = run(["evolution", "sync", "--my-agent", "hermes"], cwd=t.tmpdir)
+        check(rc == 0, "sync reverse succeeds")
+        check("openclaw" in out, "sees openclaw")
+
+
 def test_schema_validation():
     with test("schema validation catches bad data") as t:
         # Write a bad pulse file (missing required fields)
@@ -257,6 +304,9 @@ if __name__ == "__main__":
         test_pulse_clean_skips_working,
         test_status,
         test_mesh_root_env,
+        test_evolution_log,
+        test_evolution_multiple_entries,
+        test_evolution_sync,
         test_schema_validation,
     ]
 

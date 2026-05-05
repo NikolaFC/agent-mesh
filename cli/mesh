@@ -105,6 +105,7 @@ def mesh_paths(root):
         "active": mesh / "tasks" / "active",
         "archived": mesh / "tasks" / "archived",
         "shared": mesh / "shared",
+        "evolution": mesh / "shared" / "evolution",
     }
 
 
@@ -247,6 +248,7 @@ def cmd_init(_args):
         mesh / "tasks" / "active",
         mesh / "tasks" / "archived",
         mesh / "shared",
+        mesh / "shared" / "evolution",
     ]
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)
@@ -982,6 +984,125 @@ def cmd_sync(args):
     success(f"\n✅ Sync complete: {created} created, {updated} updated, {unchanged} unchanged")
 
 
+# ── Evolution: shared identity / mutual learning ──────────────
+
+def collect_evolution_files(paths):
+    evo = paths["evolution"]
+    if not evo.is_dir():
+        return []
+    return sorted(evo.glob("*.md"), key=lambda p: p.name)
+
+
+def cmd_evolution_log(args):
+    if not is_agent_name(args.agent):
+        die("Invalid agent name. Use lowercase letters, digits, and hyphens.")
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    evo_dir = paths["evolution"]
+    evo_dir.mkdir(parents=True, exist_ok=True)
+    evo_file = evo_dir / f"{args.agent}.md"
+
+    stamp = now_iso()
+    file_changed = args.file or "(unspecified)"
+    category = args.category or "general"
+    summary = args.summary.rstrip("\n")
+
+    # First entry creates the header
+    if not evo_file.exists():
+        header = f"# Evolution Log: {args.agent}\n\nAgent identity, preference, and SOP changes.\nOther agents may read this to absorb useful learnings.\n"
+        write_text(evo_file, header)
+
+    block = f"\n## [{stamp}] {category} — {file_changed}\n\n{summary}\n"
+    append_text(evo_file, block)
+    success(f"✅ Logged evolution for {args.agent}: {category} — {file_changed}")
+
+
+def cmd_evolution_read(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+
+    targets = []
+    if args.agent:
+        p = paths["evolution"] / f"{args.agent}.md"
+        if not p.exists():
+            die(f"No evolution log for agent '{args.agent}'.")
+        targets = [p]
+    elif args.all:
+        targets = collect_evolution_files(paths)
+    else:
+        targets = collect_evolution_files(paths)
+
+    if not targets:
+        warn("📚 No evolution logs found.")
+        return
+
+    # Optional: limit to recent N entries
+    recent = args.recent or 0
+    for idx, f in enumerate(targets):
+        if idx:
+            print("\n" + "=" * 60 + "\n")
+        content = read_text(f)
+        if recent > 0:
+            # Split by ## [timestamp] entries and take last N
+            entries = content.split("\n## [")
+            header = entries[0]
+            body_entries = entries[1:]
+            if body_entries:
+                kept = body_entries[-recent:]
+                content = header + "\n" + "\n## [".join(kept)
+        print(content, end="")
+
+
+def cmd_evolution_sync(args):
+    """Read evolution logs from other agents and show what's new."""
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    my_agent = args.my_agent
+    if not is_agent_name(my_agent):
+        die("Invalid agent name. Use lowercase letters, digits, and hyphens.")
+
+    evo_files = collect_evolution_files(paths)
+    others = [f for f in evo_files if f.stem != my_agent]
+
+    if not others:
+        warn("No other agent evolution logs found.")
+        return
+
+    # Check how recently each was updated
+    cutoff = None
+    if args.since_hours:
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=args.since_hours)
+
+    info(f"📚 Evolution from other agents (showing for {my_agent}):")
+    for f in others:
+        agent = f.stem
+        content = read_text(f)
+        if not content.strip():
+            continue
+
+        # Parse entries
+        entries = content.split("\n## [")
+        recent_entries = []
+        for entry in entries[1:]:
+            # Extract timestamp
+            ts_str = entry.split("]")[0] if "]" in entry else ""
+            ts = parse_iso(ts_str)
+            if cutoff and ts and ts < cutoff:
+                continue
+            recent_entries.append(entry)
+
+        if not recent_entries:
+            continue
+
+        count = len(recent_entries)
+        last_ts = recent_entries[-1].split("]")[0] if recent_entries else "?"
+        info(f"\n  📄 {agent} — {count} recent change(s), last at {last_ts}")
+        for entry in recent_entries[-3:]:  # Show last 3
+            lines = entry.strip().split("\n")
+            category_line = lines[0] if lines else ""
+            print(f"    • [{category_line[:80]}]")
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="mesh", description="Agent Mesh CLI")
     sub = parser.add_subparsers(dest="command")
@@ -1087,6 +1208,27 @@ def build_parser():
     p_export = sub.add_parser("export", help="Export status as markdown")
     p_export.add_argument("--output", "-o", help="Output file (default: stdout)")
     p_export.set_defaults(func=cmd_export)
+
+    p_evo = sub.add_parser("evolution", help="Agent identity/preference/SOP change logs")
+    evo_sub = p_evo.add_subparsers(dest="evolution_command")
+
+    p_evo_log = evo_sub.add_parser("log", help="Log an identity/preference/SOP change")
+    p_evo_log.add_argument("--agent", required=True, help="Agent name")
+    p_evo_log.add_argument("--file", help="Which file changed (e.g. AGENTS.md, USER.md)")
+    p_evo_log.add_argument("--category", help="Change category (e.g. sop, preference, identity, memory)")
+    p_evo_log.add_argument("--summary", required=True, help="What changed and why")
+    p_evo_log.set_defaults(func=cmd_evolution_log)
+
+    p_evo_read = evo_sub.add_parser("read", help="Read evolution logs")
+    p_evo_read.add_argument("--agent", help="Read specific agent's log")
+    p_evo_read.add_argument("--all", action="store_true", help="Read all agents")
+    p_evo_read.add_argument("--recent", type=int, help="Show only recent N entries")
+    p_evo_read.set_defaults(func=cmd_evolution_read)
+
+    p_evo_sync = evo_sub.add_parser("sync", help="Check other agents' recent changes")
+    p_evo_sync.add_argument("--my-agent", required=True, help="Your agent name (to exclude from results)")
+    p_evo_sync.add_argument("--since-hours", type=int, default=168, help="Look back N hours (default: 168 = 7 days)")
+    p_evo_sync.set_defaults(func=cmd_evolution_sync)
 
     return parser
 

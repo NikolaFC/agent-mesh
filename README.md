@@ -129,6 +129,9 @@ export MESH_ROOT=/path/to/project/root
 | `mesh shared update` | Replace shared file content |
 | `mesh validate` | Validate all .mesh files against schemas |
 | `mesh sync [--repo]` | Sync PR status from GitHub |
+| `mesh evolution log` | Log an identity/preference/SOP change |
+| `mesh evolution read` | Read agent evolution logs |
+| `mesh evolution sync` | Check other agents' recent changes |
 
 ## Agent Integration
 
@@ -232,6 +235,25 @@ python3 tests/test_cli.py
 ```
 
 46 tests covering: init, pulse CRUD, task lifecycle, assign, search, shared files, validate, export, pulse clean, MESH_ROOT env, schema validation.
+
+## Evolution: Shared Identity & Mutual Learning
+
+Beyond task coordination, Agent Mesh supports **evolution logging** — a way for agents to share what they've learned about themselves.
+
+When an agent modifies its core files (AGENTS.md, USER.md, SOUL.md, SOPs), it logs the change to `.mesh/shared/evolution/{agent}.md`. Other agents can read these logs and selectively absorb useful learnings.
+
+```bash
+# Log a change you made
+mesh evolution log --agent hermes --file AGENTS.md --category sop --summary "Added mesh workflow skill"
+
+# Read another agent's evolution
+mesh evolution read --agent hermes
+
+# Check what's new from all other agents
+mesh evolution sync --my-agent openclaw --since-hours 48
+```
+
+This is **not** read on every mesh interaction — it's a passive log that agents actively choose to consume when they want to learn from each other.
 
 ## Contributing
 
