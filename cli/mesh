@@ -608,6 +608,142 @@ def cmd_shared_append(args):
     success(f"✅ Appended to {p.name}")
 
 
+def cmd_shared_update(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    p = resolve_shared_file(paths, args.file)
+    content = args.content.rstrip("\n") + "\n"
+    write_text(p, content)
+    success(f"✅ Replaced {p.name}")
+
+
+def cmd_task_assign(args):
+    if not is_agent_name(args.agent):
+        die("Invalid agent name. Use lowercase letters, digits, and hyphens.")
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    task_file, task = load_task(paths, args.id)
+    old = task.get("assignedTo", "unassigned")
+    task["assignedTo"] = args.agent
+    task["updatedAt"] = now_iso()
+    history = task.get("history", [])
+    history.append({
+        "agent": args.agent,
+        "action": "commented",
+        "summary": f"Reassigned from {old} to {args.agent}",
+        "at": now_iso(),
+    })
+    task["history"] = history
+    write_json(task_file, task)
+    success(f"✅ Reassigned {args.id}: {old} → {args.agent}")
+
+
+def cmd_task_search(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    files = collect_task_files(paths, include_archived=args.archived)
+    query = args.query.lower()
+    hits = []
+    for f in files:
+        task = read_json(f)
+        searchable = " ".join([
+            task.get("title", ""),
+            task.get("id", ""),
+            task.get("assignedTo", ""),
+            task.get("type", ""),
+            task.get("status", ""),
+        ]).lower()
+        # Also search history summaries
+        for h in task.get("history", []):
+            searchable += " " + h.get("summary", "").lower()
+        if query in searchable:
+            hits.append(task)
+    if not hits:
+        warn(f"No tasks matching '{args.query}'")
+        return
+    for task in hits:
+        icon = "✅" if task.get("status") in {"merged", "closed", "deployed"} else "⏳"
+        print(f"{icon} {task.get('id')} | {task.get('status')} | {task.get('title')}")
+
+
+def cmd_pulse_clean(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    threshold = datetime.timedelta(minutes=args.stale_minutes)
+    removed = 0
+    for pf in collect_pulse_files(paths):
+        data = read_json(pf)
+        ts = parse_iso(data.get("lastUpdate"))
+        if ts is None:
+            continue
+        age = now - ts.astimezone(datetime.timezone.utc)
+        if age > threshold:
+            agent = data.get("agent", pf.stem)
+            status = data.get("status", "unknown")
+            if status in {"done", "idle"}:
+                pf.unlink()
+                removed += 1
+                info(f"  🗑️  Removed stale pulse: {agent} (last update {int(age.total_seconds() // 60)}m ago)")
+            else:
+                warn(f"  ⚠️  Skipped {agent}: status={status}, stale {int(age.total_seconds() // 60)}m (not done/idle)")
+    success(f"\n✅ Cleaned {removed} stale pulse(s)")
+
+
+def cmd_export(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    lines = ["# Agent Mesh Status Report", "", f"Generated: {now_iso()}", ""]
+
+    # Agents
+    lines.append("## 📡 Agents")
+    pulse_files = collect_pulse_files(paths)
+    if not pulse_files:
+        lines.append("(none)")
+    for pf in pulse_files:
+        data = read_json(pf)
+        status = data.get("status", "unknown")
+        agent = data.get("agent", pf.stem)
+        task_id = (data.get("currentTask") or {}).get("id", "-")
+        summary = ""
+        recent = data.get("recentActions") or []
+        if recent and isinstance(recent, list) and recent:
+            last = recent[-1]
+            if isinstance(last, dict) and last.get("summary"):
+                summary = f" — {last['summary']}"
+        lines.append(f"- **{agent}**: {status} | task: {task_id}{summary}")
+    lines.append("")
+
+    # Active tasks
+    lines.append("## 📋 Active Tasks")
+    task_files = collect_task_files(paths, include_archived=False)
+    if not task_files:
+        lines.append("(none)")
+    for tf in task_files:
+        task = read_json(tf)
+        lines.append(
+            f"- **{task.get('id')}** [{task.get('status')}] verdict={task.get('verdict', '-')} "
+            f"assignee={task.get('assignedTo', '-')} — {task.get('title', '')}"
+        )
+    lines.append("")
+
+    # Blockers
+    blockers_path = paths["shared"] / "blockers.md"
+    if blockers_path.exists():
+        content = read_text(blockers_path).strip()
+        if content and content != "# Blockers\n\nTrack blockers that need human input or cross-agent coordination.":
+            lines.append("## 🚫 Blockers")
+            lines.append(content)
+            lines.append("")
+
+    output = "\n".join(lines)
+    if args.output:
+        write_text(Path(args.output), output)
+        success(f"✅ Exported to {args.output}")
+    else:
+        print(output)
+
+
 def cmd_validate(_args):
     root = require_mesh_root()
     paths = mesh_paths(root)
@@ -692,9 +828,21 @@ def gh_estimate_progress(ci_status, review_decision):
 
 
 def cmd_sync(args):
+    # Check gh CLI availability
+    import subprocess
+    try:
+        r = subprocess.run("gh --version", shell=True, capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
+            die("GitHub CLI (gh) not found. Install: https://cli.github.com")
+    except FileNotFoundError:
+        die("GitHub CLI (gh) not found. Install: https://cli.github.com")
+    # Check gh auth
+    r = subprocess.run("gh auth status", shell=True, capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        die("gh not authenticated. Run: gh auth login")
+
     repo = args.repo
     if not repo:
-        import subprocess
         try:
             r = subprocess.run(
                 "gh repo view --json nameWithOwner -q .nameWithOwner",
@@ -862,6 +1010,10 @@ def build_parser():
     p_pulse_check = pulse_sub.add_parser("check", help="Find stale pulses (>30m)")
     p_pulse_check.set_defaults(func=cmd_pulse_check)
 
+    p_pulse_clean = pulse_sub.add_parser("clean", help="Remove stale done/idle pulses")
+    p_pulse_clean.add_argument("--stale-minutes", type=int, default=60, help="Stale threshold in minutes (default: 60)")
+    p_pulse_clean.set_defaults(func=cmd_pulse_clean)
+
     p_task = sub.add_parser("task", help="Task operations")
     task_sub = p_task.add_subparsers(dest="task_command")
 
@@ -898,6 +1050,16 @@ def build_parser():
     p_task_archive.add_argument("--id", required=True, help="Task ID")
     p_task_archive.set_defaults(func=cmd_task_archive)
 
+    p_task_assign = task_sub.add_parser("assign", help="Reassign a task")
+    p_task_assign.add_argument("--id", required=True, help="Task ID")
+    p_task_assign.add_argument("--agent", required=True, help="New assignee")
+    p_task_assign.set_defaults(func=cmd_task_assign)
+
+    p_task_search = task_sub.add_parser("search", help="Search tasks by keyword")
+    p_task_search.add_argument("query", help="Search query")
+    p_task_search.add_argument("--archived", action="store_true", help="Include archived tasks")
+    p_task_search.set_defaults(func=cmd_task_search)
+
     p_shared = sub.add_parser("shared", help="Shared knowledge files")
     shared_sub = p_shared.add_subparsers(dest="shared_command")
 
@@ -910,12 +1072,21 @@ def build_parser():
     p_shared_append.add_argument("--content", required=True, help="Content to append")
     p_shared_append.set_defaults(func=cmd_shared_append)
 
+    p_shared_update = shared_sub.add_parser("update", help="Replace shared file content")
+    p_shared_update.add_argument("file", help="context|decisions|blockers")
+    p_shared_update.add_argument("--content", required=True, help="New content")
+    p_shared_update.set_defaults(func=cmd_shared_update)
+
     p_validate = sub.add_parser("validate", help="Validate all pulse/task JSON files")
     p_validate.set_defaults(func=cmd_validate)
 
     p_sync = sub.add_parser("sync", help="Sync PR status from GitHub")
     p_sync.add_argument("--repo", help="GitHub repo (owner/name). Auto-detects from git remote if omitted.")
     p_sync.set_defaults(func=cmd_sync)
+
+    p_export = sub.add_parser("export", help="Export status as markdown")
+    p_export.add_argument("--output", "-o", help="Output file (default: stdout)")
+    p_export.set_defaults(func=cmd_export)
 
     return parser
 

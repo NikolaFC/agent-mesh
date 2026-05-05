@@ -1,0 +1,20 @@
+#!/bin/bash
+# Agent Mesh post-commit hook
+# Auto-updates pulse after each commit
+#
+# Install: cp hooks/post-commit .git/hooks/post-commit && chmod +x .git/hooks/post-commit
+# Or:      ln -sf ../../hooks/post-commit .git/hooks/post-commit
+
+# Detect agent name from env or git user
+AGENT="${MESH_AGENT:-$(git config user.name | tr '[:upper:]' '[:lower:]' | tr ' ' '-')}"
+
+if [ -z "$AGENT" ]; then
+    exit 0
+fi
+
+# Only update if mesh is available and .mesh exists
+if command -v mesh &>/dev/null && [ -d ".mesh" ]; then
+    HASH=$(git rev-parse --short HEAD)
+    MSG=$(git log -1 --pretty=%s | head -c 120)
+    mesh pulse update --agent "$AGENT" --status working --summary "committed $HASH: $MSG" 2>/dev/null || true
+fi

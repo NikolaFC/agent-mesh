@@ -84,24 +84,41 @@ ln -s $(pwd)/cli/mesh /usr/local/bin/mesh
 cp cli/mesh /usr/local/bin/mesh
 ```
 
+### Dependencies
+
+- Python 3.8+ (standard library only)
+- [GitHub CLI](https://cli.github.com) (`gh`) — only needed for `mesh sync`
+
+### Environment
+
+If your working directory is not the project root:
+```bash
+export MESH_ROOT=/path/to/project/root
+```
+
 ## CLI Reference
 
 | Command | Description |
 |---------|-------------|
 | `mesh init` | Initialize `.mesh/` directory with schemas |
 | `mesh status` | Overview of all agents + active tasks |
+| `mesh export [-o file]` | Export status as markdown report |
 | `mesh pulse read [--all]` | Read agent pulse(s) |
 | `mesh pulse update` | Update your agent's pulse |
 | `mesh pulse check` | Find stale agents (no update in 30min) |
+| `mesh pulse clean` | Remove stale done/idle pulses |
 | `mesh task create` | Create a new task |
 | `mesh task update` | Update task status/verdict/progress |
+| `mesh task assign` | Reassign a task to another agent |
+| `mesh task search` | Search tasks by keyword |
 | `mesh task history` | Append to task event log |
 | `mesh task list` | List tasks with filters |
 | `mesh task archive` | Move task to archive |
 | `mesh shared read` | Read shared knowledge file |
 | `mesh shared append` | Append to shared file (append-only) |
+| `mesh shared update` | Replace shared file content |
 | `mesh validate` | Validate all .mesh files against schemas |
-| `mesh sync` | Refresh from external sources (GitHub PRs) |
+| `mesh sync [--repo]` | Sync PR status from GitHub |
 
 ## Agent Integration
 
@@ -162,12 +179,49 @@ Claude Code: reads pulse  →  knows not to touch #77540 area
 Human: mesh status  →  sees everything at a glance
 ```
 
+## Git Hooks
+
+Auto-update pulse on every commit:
+
+```bash
+# One-time setup
+cp hooks/post-commit .git/hooks/post-commit
+chmod +x .git/hooks/post-commit
+
+# Or use symlink for auto-updates
+git config core.hooksPath hooks
+```
+
+Set your agent name:
+```bash
+export MESH_AGENT=hermes  # or codex, claude-code, etc.
+```
+
+## GitHub Actions
+
+Auto-sync mesh tasks on PR events. Copy the template:
+
+```bash
+cp .github/workflows/mesh-sync.yml <your-repo>/.github/workflows/
+```
+
+See [`.github/workflows/mesh-sync.yml`](.github/workflows/mesh-sync.yml) for the full template.
+
+## Tests
+
+```bash
+python3 tests/test_cli.py
+```
+
+46 tests covering: init, pulse CRUD, task lifecycle, assign, search, shared files, validate, export, pulse clean, MESH_ROOT env, schema validation.
+
 ## Contributing
 
 1. Fork it
 2. Create your feature branch
 3. Add yourself to `.mesh/pulse/` (eat your own dog food)
-4. Submit a PR
+4. Run tests: `python3 tests/test_cli.py`
+5. Submit a PR
 
 ## License
 

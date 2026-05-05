@@ -1,0 +1,66 @@
+# Agent Mesh — GitHub Actions Sync Template
+#
+# Add this workflow to your repo to auto-update mesh tasks on PR events.
+# Requires: mesh CLI installed, .mesh/ in repo root
+#
+# Copy to: .github/workflows/mesh-sync.yml
+
+name: Agent Mesh Sync
+
+on:
+  pull_request:
+    types: [opened, synchronize, closed, reopened]
+  check_suite:
+    types: [completed]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  mesh-update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mesh CLI
+        run: |
+          chmod +x cli/mesh
+          sudo ln -sf "$(pwd)/cli/mesh" /usr/local/bin/mesh
+
+      - name: Update task on PR event
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_STATE: ${{ github.event.pull_request.state }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          EVENT_ACTION: ${{ github.event.action }}
+        run: |
+          TASK_ID="pr-${PR_NUMBER}"
+
+          # Create task if it doesn't exist
+          if [ ! -f ".mesh/tasks/active/${TASK_ID}.json" ]; then
+            mesh task create --id "$TASK_ID" --title "$PR_TITLE" --type upstream-pr --assign github-actions || true
+          fi
+
+          # Update status based on event
+          if [ "$PR_MERGED" = "true" ]; then
+            mesh task update --id "$TASK_ID" --status merged --progress 1.0
+            mesh task history --id "$TASK_ID" --action merged --summary "PR merged via GitHub" --agent github-actions
+            mesh task archive --id "$TASK_ID"
+          elif [ "$PR_STATE" = "closed" ]; then
+            mesh task update --id "$TASK_ID" --status closed
+            mesh task history --id "$TASK_ID" --action closed --summary "PR closed without merge" --agent github-actions
+          elif [ "$EVENT_ACTION" = "opened" ]; then
+            mesh task update --id "$TASK_ID" --status open
+            mesh task history --id "$TASK_ID" --action created --summary "PR opened" --agent github-actions
+          elif [ "$EVENT_ACTION" = "synchronize" ]; then
+            mesh task history --id "$TASK_ID" --action committed --summary "New commits pushed" --agent github-actions
+          fi
+
+      - name: Commit mesh state
+        run: |
+          git config user.name "mesh-bot"
+          git config user.email "mesh-bot@noreply"
+          git add .mesh/
+          git diff --staged --quiet || git commit -m "mesh: auto-update from PR event"
+          git push || true
