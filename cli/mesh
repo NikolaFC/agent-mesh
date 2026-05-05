@@ -1,0 +1,741 @@
+#!/usr/bin/env python3
+import argparse
+import datetime
+import json
+import os
+import sys
+from pathlib import Path
+
+PULSE_SCHEMA_ID = "agent-mesh/pulse/v1"
+TASK_SCHEMA_ID = "agent-mesh/task/v1"
+
+PULSE_STATUS = {"idle", "working", "blocked", "reviewing", "done"}
+TASK_TYPES = {"upstream-pr", "feature", "bugfix", "investigation", "refactor", "docs", "ops", "research"}
+TASK_STATUS = {"open", "in-progress", "blocked", "review", "ci-pass", "ci-fail", "deployed", "merged", "closed", "archived"}
+TASK_VERDICTS = {"ADOPT", "REPAIR", "CLOSE", "pending"}
+TASK_PRIORITIES = {"critical", "high", "medium", "low"}
+TASK_ACTIONS = {"created", "started", "committed", "repaired", "validated", "deployed", "merged", "closed", "commented", "blocked", "unblocked", "tested", "reviewed"}
+
+
+def now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def parse_iso(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
+        return datetime.datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def supports_color():
+    return sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+
+
+USE_COLOR = supports_color()
+
+
+def color(text, code):
+    if not USE_COLOR:
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+def info(msg):
+    print(color(msg, "36"))
+
+
+def success(msg):
+    print(color(msg, "32"))
+
+
+def warn(msg):
+    print(color(msg, "33"))
+
+
+def fail(msg):
+    print(color(msg, "31"), file=sys.stderr)
+
+
+def die(msg, hint_init=False, code=1):
+    fail(f"❌ {msg}")
+    if hint_init:
+        print("💡 Did you run `mesh init`?", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def detect_mesh_root(start=None):
+    cur = Path(start or os.getcwd()).resolve()
+    while True:
+        mesh_dir = cur / ".mesh"
+        if mesh_dir.is_dir():
+            return cur
+        parent = cur.parent
+        if parent == cur:
+            return None
+        cur = parent
+
+
+def require_mesh_root():
+    root = detect_mesh_root()
+    if not root:
+        die("Could not find .mesh directory from current path.", hint_init=True)
+    return root
+
+
+def mesh_paths(root):
+    mesh = root / ".mesh"
+    return {
+        "mesh": mesh,
+        "pulse": mesh / "pulse",
+        "tasks": mesh / "tasks",
+        "active": mesh / "tasks" / "active",
+        "archived": mesh / "tasks" / "archived",
+        "shared": mesh / "shared",
+    }
+
+
+def read_json(path):
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        die(f"Missing file: {path}")
+    except json.JSONDecodeError as e:
+        die(f"Invalid JSON in {path}: {e}")
+
+
+def write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+
+def read_text(path):
+    with path.open("r", encoding="utf-8") as f:
+        return f.read()
+
+
+def write_text(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        f.write(content)
+
+
+def append_text(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(content)
+
+
+def is_agent_name(value):
+    if not isinstance(value, str):
+        return False
+    if not value:
+        return False
+    allowed = "abcdefghijklmnopqrstuvwxyz0123456789-"
+    for i, ch in enumerate(value):
+        if ch not in allowed:
+            return False
+        if i == 0 and ch == "-":
+            return False
+    return True
+
+
+def is_task_id(value):
+    return is_agent_name(value)
+
+
+def validate_by_schema(data, schema, path="$"):
+    errors = []
+
+    stype = schema.get("type")
+    if stype:
+        if stype == "object" and not isinstance(data, dict):
+            return [f"{path}: expected object"]
+        if stype == "array" and not isinstance(data, list):
+            return [f"{path}: expected array"]
+        if stype == "string" and not isinstance(data, str):
+            return [f"{path}: expected string"]
+        if stype == "number" and not isinstance(data, (int, float)):
+            return [f"{path}: expected number"]
+        if stype == "boolean" and not isinstance(data, bool):
+            return [f"{path}: expected boolean"]
+
+    if "const" in schema and data != schema["const"]:
+        errors.append(f"{path}: expected const {schema['const']!r}")
+
+    if "enum" in schema and data not in schema["enum"]:
+        errors.append(f"{path}: expected one of {schema['enum']}")
+
+    if isinstance(data, str):
+        if "minLength" in schema and len(data) < schema["minLength"]:
+            errors.append(f"{path}: length < {schema['minLength']}")
+        if "maxLength" in schema and len(data) > schema["maxLength"]:
+            errors.append(f"{path}: length > {schema['maxLength']}")
+        pattern = schema.get("pattern")
+        if pattern == "^[a-z0-9][a-z0-9-]*$":
+            if not is_agent_name(data):
+                errors.append(f"{path}: does not match pattern {pattern}")
+        if schema.get("format") == "date-time" and parse_iso(data) is None:
+            errors.append(f"{path}: invalid date-time format")
+
+    if isinstance(data, (int, float)):
+        if "minimum" in schema and data < schema["minimum"]:
+            errors.append(f"{path}: value < {schema['minimum']}")
+        if "maximum" in schema and data > schema["maximum"]:
+            errors.append(f"{path}: value > {schema['maximum']}")
+
+    if isinstance(data, list):
+        if "maxItems" in schema and len(data) > schema["maxItems"]:
+            errors.append(f"{path}: too many items (> {schema['maxItems']})")
+        item_schema = schema.get("items")
+        if item_schema:
+            for idx, item in enumerate(data):
+                errors.extend(validate_by_schema(item, item_schema, f"{path}[{idx}]"))
+
+    if isinstance(data, dict):
+        required = schema.get("required", [])
+        for key in required:
+            if key not in data:
+                errors.append(f"{path}: missing required field '{key}'")
+
+        props = schema.get("properties", {})
+        for key, subschema in props.items():
+            if key in data:
+                errors.extend(validate_by_schema(data[key], subschema, f"{path}.{key}"))
+
+        additional = schema.get("additionalProperties")
+        if isinstance(additional, dict):
+            declared = set(props.keys())
+            for key, value in data.items():
+                if key not in declared:
+                    errors.extend(validate_by_schema(value, additional, f"{path}.{key}"))
+
+    return errors
+
+
+def task_title_from_file(task):
+    return task.get("title") or task.get("id") or "(untitled)"
+
+
+def cmd_init(_args):
+    existing = detect_mesh_root()
+    if existing and (existing / ".mesh").is_dir() and existing == Path(os.getcwd()).resolve():
+        warn(f"📚 Already initialized at {existing / '.mesh'}")
+        return
+
+    base = Path(os.getcwd()).resolve()
+    mesh = base / ".mesh"
+    dirs = [
+        mesh / "pulse",
+        mesh / "tasks",
+        mesh / "tasks" / "active",
+        mesh / "tasks" / "archived",
+        mesh / "shared",
+    ]
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+
+    context_tpl = "# Shared Context\n\nProject context that every agent should read before starting work.\n"
+    decisions_tpl = "# Decisions Log\n\nAppend-only architecture and workflow decisions.\n"
+    blockers_tpl = "# Blockers\n\nTrack blockers that need human input or cross-agent coordination.\n"
+
+    for name, content in (
+        ("context.md", context_tpl),
+        ("decisions.md", decisions_tpl),
+        ("blockers.md", blockers_tpl),
+    ):
+        p = mesh / "shared" / name
+        if not p.exists():
+            write_text(p, content)
+
+    success(f"✅ Initialized Agent Mesh at {mesh}")
+
+
+def collect_pulse_files(paths):
+    return sorted(paths["pulse"].glob("*.json"), key=lambda p: p.name)
+
+
+def collect_task_files(paths, include_archived=False):
+    active = sorted(paths["active"].glob("*.json"), key=lambda p: p.name)
+    if not include_archived:
+        return active
+    archived = sorted(paths["archived"].glob("*.json"), key=lambda p: p.name)
+    return active + archived
+
+
+def cmd_status(_args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+
+    pulse_files = collect_pulse_files(paths)
+    task_files = collect_task_files(paths, include_archived=False)
+
+    print("📡 Agents")
+    if not pulse_files:
+        print("  (none)")
+    for pf in pulse_files:
+        data = read_json(pf)
+        status = data.get("status", "unknown")
+        task_id = (data.get("currentTask") or {}).get("id", "-")
+        summary = ""
+        recent = data.get("recentActions") or []
+        if recent and isinstance(recent, list):
+            last = recent[-1]
+            if isinstance(last, dict) and last.get("summary"):
+                summary = f" — {last.get('summary')}"
+        icon = {
+            "working": "⏳",
+            "blocked": "🚫",
+            "done": "✅",
+            "reviewing": "📋",
+            "idle": "📡",
+        }.get(status, "📡")
+        print(f"  {icon} {data.get('agent', pf.stem)} | {status} | task: {task_id}{summary}")
+
+    print("\n📋 Active Tasks")
+    if not task_files:
+        print("  (none)")
+    for tf in task_files:
+        task = read_json(tf)
+        icon = "✅" if task.get("status") in {"merged", "closed", "deployed"} else ("🚫" if task.get("status") == "blocked" else "⏳")
+        verdict = task.get("verdict", "-")
+        print(
+            f"  {icon} {task.get('id', tf.stem)} | {task.get('status', '-')} | verdict: {verdict} | assignee: {task.get('assignedTo', '-') }"
+        )
+
+
+def cmd_pulse_read(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+
+    if args.agent and args.all:
+        die("Use either --agent or --all, not both.")
+
+    targets = []
+    if args.agent:
+        target = paths["pulse"] / f"{args.agent}.json"
+        if not target.exists():
+            die(f"Pulse not found for agent '{args.agent}'.")
+        targets = [target]
+    elif args.all:
+        targets = collect_pulse_files(paths)
+    else:
+        targets = collect_pulse_files(paths)
+
+    if not targets:
+        warn("📡 No pulse files found.")
+        return
+
+    for idx, file in enumerate(targets):
+        if idx:
+            print("-" * 60)
+        data = read_json(file)
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def cmd_pulse_update(args):
+    if args.status not in PULSE_STATUS:
+        die(f"Invalid pulse status '{args.status}'. Allowed: {sorted(PULSE_STATUS)}")
+    if not is_agent_name(args.agent):
+        die("Invalid agent name. Use lowercase letters, digits, and hyphens.")
+
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+
+    pulse_file = paths["pulse"] / f"{args.agent}.json"
+    existing = {}
+    if pulse_file.exists():
+        existing = read_json(pulse_file)
+
+    data = {
+        "schema": PULSE_SCHEMA_ID,
+        "agent": args.agent,
+        "agentType": existing.get("agentType", "custom"),
+        "lastUpdate": now_iso(),
+        "status": args.status,
+        "blockers": existing.get("blockers", []),
+        "nextActions": existing.get("nextActions", []),
+    }
+
+    if args.task:
+        data["currentTask"] = {
+            "id": args.task,
+            "title": existing.get("currentTask", {}).get("title", args.task),
+            "progress": existing.get("currentTask", {}).get("progress", 0.0),
+        }
+
+    if args.summary:
+        actions = existing.get("recentActions", [])
+        if not isinstance(actions, list):
+            actions = []
+        actions.append({"type": "note", "summary": args.summary, "at": now_iso()})
+        data["recentActions"] = actions[-10:]
+    elif "recentActions" in existing:
+        data["recentActions"] = existing.get("recentActions", [])
+
+    write_json(pulse_file, data)
+    success(f"✅ Updated pulse for {args.agent}")
+
+
+def cmd_pulse_check(_args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    stale = []
+
+    for pf in collect_pulse_files(paths):
+        data = read_json(pf)
+        ts = parse_iso(data.get("lastUpdate"))
+        if ts is None:
+            stale.append((data.get("agent", pf.stem), "invalid timestamp"))
+            continue
+        age = now - ts.astimezone(datetime.timezone.utc)
+        if age > datetime.timedelta(minutes=30):
+            mins = int(age.total_seconds() // 60)
+            stale.append((data.get("agent", pf.stem), f"{mins}m"))
+
+    if not stale:
+        success("✅ All agents updated within 30 minutes")
+        return
+
+    warn("🚫 Stale agents (>30m):")
+    for agent, age in stale:
+        print(f"  - {agent}: {age}")
+
+
+def load_task(paths, task_id):
+    file = paths["active"] / f"{task_id}.json"
+    if not file.exists():
+        die(f"Task '{task_id}' not found in active tasks.")
+    return file, read_json(file)
+
+
+def cmd_task_create(args):
+    if not is_task_id(args.id):
+        die("Invalid task id. Use lowercase letters, digits, and hyphens.")
+    if args.type not in TASK_TYPES:
+        die(f"Invalid task type '{args.type}'. Allowed: {sorted(TASK_TYPES)}")
+    if args.priority not in TASK_PRIORITIES:
+        die(f"Invalid priority '{args.priority}'. Allowed: {sorted(TASK_PRIORITIES)}")
+    if args.assign and not is_agent_name(args.assign):
+        die("Invalid assignee. Use lowercase letters, digits, and hyphens.")
+
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+
+    task_file = paths["active"] / f"{args.id}.json"
+    if task_file.exists() or (paths["archived"] / f"{args.id}.json").exists():
+        die(f"Task '{args.id}' already exists.")
+
+    now = now_iso()
+    assignee = args.assign or "unassigned"
+    task = {
+        "schema": TASK_SCHEMA_ID,
+        "id": args.id,
+        "type": args.type,
+        "title": args.title,
+        "status": "open",
+        "verdict": "pending",
+        "priority": args.priority,
+        "assignedTo": assignee,
+        "createdAt": now,
+        "updatedAt": now,
+        "progress": 0.0,
+        "history": [
+            {
+                "agent": assignee,
+                "action": "created",
+                "summary": "Task created",
+                "at": now,
+            }
+        ],
+    }
+    write_json(task_file, task)
+    success(f"✅ Created task {args.id}")
+
+
+def cmd_task_update(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    task_file, task = load_task(paths, args.id)
+
+    changed = False
+    if args.status is not None:
+        if args.status not in TASK_STATUS:
+            die(f"Invalid status '{args.status}'. Allowed: {sorted(TASK_STATUS)}")
+        task["status"] = args.status
+        changed = True
+
+    if args.verdict is not None:
+        if args.verdict not in TASK_VERDICTS:
+            die(f"Invalid verdict '{args.verdict}'. Allowed: {sorted(TASK_VERDICTS)}")
+        task["verdict"] = args.verdict
+        changed = True
+
+    if args.progress is not None:
+        if args.progress < 0 or args.progress > 1:
+            die("Progress must be between 0 and 1.")
+        task["progress"] = args.progress
+        changed = True
+
+    if not changed:
+        die("No updates provided. Use at least one of --status/--verdict/--progress.")
+
+    task["updatedAt"] = now_iso()
+    write_json(task_file, task)
+    success(f"✅ Updated task {args.id}")
+
+
+def cmd_task_history(args):
+    if args.action not in TASK_ACTIONS:
+        die(f"Invalid action '{args.action}'. Allowed: {sorted(TASK_ACTIONS)}")
+
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    task_file, task = load_task(paths, args.id)
+
+    agent = args.agent or task.get("assignedTo") or "unknown"
+    entry = {
+        "agent": agent,
+        "action": args.action,
+        "summary": args.summary,
+        "at": now_iso(),
+    }
+    if args.ref:
+        entry["ref"] = args.ref
+
+    history = task.get("history")
+    if not isinstance(history, list):
+        history = []
+    history.append(entry)
+    task["history"] = history
+    task["updatedAt"] = now_iso()
+
+    write_json(task_file, task)
+    success(f"✅ Added history entry to {args.id}")
+
+
+def cmd_task_list(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    files = collect_task_files(paths, include_archived=False)
+
+    rows = []
+    for file in files:
+        task = read_json(file)
+        if args.status and task.get("status") != args.status:
+            continue
+        if args.agent and task.get("assignedTo") != args.agent:
+            continue
+        if args.type and task.get("type") != args.type:
+            continue
+        rows.append(task)
+
+    if not rows:
+        warn("📋 No matching tasks.")
+        return
+
+    for task in rows:
+        icon = "✅" if task.get("status") in {"merged", "closed", "deployed"} else ("🚫" if task.get("status") == "blocked" else "⏳")
+        print(
+            f"{icon} {task.get('id')} | {task.get('status')} | {task.get('type')} | {task.get('assignedTo')} | verdict={task.get('verdict', '-')} | progress={task.get('progress', 0)}"
+        )
+
+
+def cmd_task_archive(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+
+    src = paths["active"] / f"{args.id}.json"
+    dst = paths["archived"] / f"{args.id}.json"
+    if not src.exists():
+        die(f"Task '{args.id}' not found in active tasks.")
+    if dst.exists():
+        die(f"Task '{args.id}' is already archived.")
+
+    task = read_json(src)
+    task["status"] = "archived"
+    task["updatedAt"] = now_iso()
+    write_json(src, task)
+    src.rename(dst)
+    success(f"✅ Archived task {args.id}")
+
+
+def resolve_shared_file(paths, value):
+    name = value.strip()
+    allowed = {"context", "decisions", "blockers", "context.md", "decisions.md", "blockers.md"}
+    if name not in allowed:
+        die("Shared file must be one of: context, decisions, blockers")
+    if not name.endswith(".md"):
+        name += ".md"
+    return paths["shared"] / name
+
+
+def cmd_shared_read(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    p = resolve_shared_file(paths, args.file)
+    if not p.exists():
+        die(f"Shared file does not exist: {p.name}")
+    print(read_text(p), end="")
+
+
+def cmd_shared_append(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    p = resolve_shared_file(paths, args.file)
+    stamp = now_iso()
+    content = args.content.rstrip("\n")
+    block = f"\n## [{stamp}]\n{content}\n"
+    append_text(p, block)
+    success(f"✅ Appended to {p.name}")
+
+
+def cmd_validate(_args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+
+    project_root = Path(__file__).resolve().parent.parent
+    pulse_schema = read_json(project_root / "schema" / "pulse-v1.json")
+    task_schema = read_json(project_root / "schema" / "task-v1.json")
+
+    any_error = False
+
+    pulse_files = collect_pulse_files(paths)
+    task_files = collect_task_files(paths, include_archived=True)
+
+    for pf in pulse_files:
+        data = read_json(pf)
+        errs = validate_by_schema(data, pulse_schema)
+        if errs:
+            any_error = True
+            fail(f"❌ {pf}")
+            for e in errs:
+                print(f"   - {e}")
+
+    for tf in task_files:
+        data = read_json(tf)
+        errs = validate_by_schema(data, task_schema)
+        if errs:
+            any_error = True
+            fail(f"❌ {tf}")
+            for e in errs:
+                print(f"   - {e}")
+
+    if any_error:
+        raise SystemExit(1)
+
+    success("✅ Validation passed")
+
+
+def cmd_sync(_args):
+    print("sync not yet implemented")
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="mesh", description="Agent Mesh CLI")
+    sub = parser.add_subparsers(dest="command")
+
+    p_init = sub.add_parser("init", help="Initialize .mesh directory")
+    p_init.set_defaults(func=cmd_init)
+
+    p_status = sub.add_parser("status", help="Show mesh status overview")
+    p_status.set_defaults(func=cmd_status)
+
+    p_pulse = sub.add_parser("pulse", help="Pulse operations")
+    pulse_sub = p_pulse.add_subparsers(dest="pulse_command")
+
+    p_pulse_read = pulse_sub.add_parser("read", help="Read pulse files")
+    p_pulse_read.add_argument("--agent", help="Agent name")
+    p_pulse_read.add_argument("--all", action="store_true", help="Read all agents")
+    p_pulse_read.set_defaults(func=cmd_pulse_read)
+
+    p_pulse_update = pulse_sub.add_parser("update", help="Create or update an agent pulse")
+    p_pulse_update.add_argument("--agent", required=True, help="Agent name")
+    p_pulse_update.add_argument("--status", required=True, help="Pulse status")
+    p_pulse_update.add_argument("--task", help="Current task ID")
+    p_pulse_update.add_argument("--summary", help="Recent action summary")
+    p_pulse_update.set_defaults(func=cmd_pulse_update)
+
+    p_pulse_check = pulse_sub.add_parser("check", help="Find stale pulses (>30m)")
+    p_pulse_check.set_defaults(func=cmd_pulse_check)
+
+    p_task = sub.add_parser("task", help="Task operations")
+    task_sub = p_task.add_subparsers(dest="task_command")
+
+    p_task_create = task_sub.add_parser("create", help="Create a task")
+    p_task_create.add_argument("--id", required=True, help="Task ID")
+    p_task_create.add_argument("--title", required=True, help="Task title")
+    p_task_create.add_argument("--type", required=True, help="Task type")
+    p_task_create.add_argument("--assign", help="Assign to agent")
+    p_task_create.add_argument("--priority", default="medium", help="Priority")
+    p_task_create.set_defaults(func=cmd_task_create)
+
+    p_task_update = task_sub.add_parser("update", help="Update task fields")
+    p_task_update.add_argument("--id", required=True, help="Task ID")
+    p_task_update.add_argument("--status", help="Task status")
+    p_task_update.add_argument("--verdict", help="Task verdict")
+    p_task_update.add_argument("--progress", type=float, help="Progress (0-1)")
+    p_task_update.set_defaults(func=cmd_task_update)
+
+    p_task_history = task_sub.add_parser("history", help="Append task history")
+    p_task_history.add_argument("--id", required=True, help="Task ID")
+    p_task_history.add_argument("--action", required=True, help="History action")
+    p_task_history.add_argument("--summary", required=True, help="History summary")
+    p_task_history.add_argument("--agent", help="Agent name")
+    p_task_history.add_argument("--ref", help="Optional reference")
+    p_task_history.set_defaults(func=cmd_task_history)
+
+    p_task_list = task_sub.add_parser("list", help="List tasks")
+    p_task_list.add_argument("--status", help="Filter by status")
+    p_task_list.add_argument("--agent", help="Filter by assignee")
+    p_task_list.add_argument("--type", help="Filter by task type")
+    p_task_list.set_defaults(func=cmd_task_list)
+
+    p_task_archive = task_sub.add_parser("archive", help="Archive a task")
+    p_task_archive.add_argument("--id", required=True, help="Task ID")
+    p_task_archive.set_defaults(func=cmd_task_archive)
+
+    p_shared = sub.add_parser("shared", help="Shared knowledge files")
+    shared_sub = p_shared.add_subparsers(dest="shared_command")
+
+    p_shared_read = shared_sub.add_parser("read", help="Read shared file")
+    p_shared_read.add_argument("file", help="context|decisions|blockers")
+    p_shared_read.set_defaults(func=cmd_shared_read)
+
+    p_shared_append = shared_sub.add_parser("append", help="Append to shared file")
+    p_shared_append.add_argument("file", help="context|decisions|blockers")
+    p_shared_append.add_argument("--content", required=True, help="Content to append")
+    p_shared_append.set_defaults(func=cmd_shared_append)
+
+    p_validate = sub.add_parser("validate", help="Validate all pulse/task JSON files")
+    p_validate.set_defaults(func=cmd_validate)
+
+    p_sync = sub.add_parser("sync", help="Sync from external sources (stub)")
+    p_sync.set_defaults(func=cmd_sync)
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+
+    func = getattr(args, "func", None)
+    if func is None:
+        parser.print_help()
+        raise SystemExit(1)
+
+    func(args)
+
+
+if __name__ == "__main__":
+    main()
