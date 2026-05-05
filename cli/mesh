@@ -69,6 +69,15 @@ def die(msg, hint_init=False, code=1):
 
 
 def detect_mesh_root(start=None):
+    # Honour MESH_ROOT env var if set
+    env_root = os.environ.get("MESH_ROOT")
+    if env_root:
+        p = Path(env_root).resolve()
+        if (p / ".mesh").is_dir():
+            return p
+        # If MESH_ROOT points to .mesh/ itself
+        if p.is_dir() and p.name == ".mesh" and p.parent:
+            return p.parent
     cur = Path(start or os.getcwd()).resolve()
     while True:
         mesh_dir = cur / ".mesh"
