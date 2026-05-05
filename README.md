@@ -18,7 +18,7 @@ Each one has its own context window. They can't see each other's progress. You s
 
 ### How it started
 
-This project was born from a real pain point: OpenClaw uses **Hermes** (a Codex-based agent) to implement upstream PRs. Every time Hermes finished a chunk of work, it would write a 22KB handoff document. OpenClaw had to parse that document, cross-reference with `gh pr view`, and manually piece together the current state. When Satoshi asked "进展怎样?", OpenClaw had to do this dance every single time.
+This project was born from a real pain point: OpenClaw uses **Hermes** (a Codex-based agent) to implement upstream PRs. Every time Hermes finished a chunk of work, it would write a 22KB handoff document. OpenClaw had to parse that document, cross-reference with `gh pr view`, and manually piece together the current state. When the user asked "How is it going?", OpenClaw had to do this dance every single time.
 
 Agent Mesh replaces all of that with `mesh status`.
 

@@ -16,7 +16,7 @@
 
 ### 起源
 
-这个项目诞生于真实痛点：OpenClaw 用 **Hermes**（一个基于 Codex 的 Agent）来实现上游 PR。每次 Hermes 完成一段工作，会写一份 22KB 的交接文档。OpenClaw 要解析这份文档，用 `gh pr view` 交叉验证，然后手动拼出当前状态。每次聪聪问"进展怎样？"，OpenClaw 都要重复这套流程。
+这个项目诞生于真实痛点：OpenClaw 用 **Hermes**（一个基于 Codex 的 Agent）来实现上游 PR。每次 Hermes 完成一段工作，会写一份 22KB 的交接文档。OpenClaw 要解析这份文档，用 `gh pr view` 交叉验证，然后手动拼出当前状态。每次用户问"进展怎样？"，OpenClaw 都要重复这套流程。
 
 Agent Mesh 用一条 `mesh status` 取代了这一切。
 
