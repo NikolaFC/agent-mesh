@@ -69,6 +69,13 @@ def test_init():
         check((mesh / "shared" / "blockers.md").exists(), "shared/blockers.md created")
 
 
+def test_version():
+    with case("version flag") as t:
+        rc, out, _ = run(["--version"], cwd=t.tmpdir)
+        check(rc == 0, "version succeeds")
+        check("Agent Mesh 0.2.0" in out, "version output correct")
+
+
 def test_pulse():
     with case("pulse update + read") as t:
         rc, out, _ = run(["pulse", "update", "--agent", "testbot", "--status", "working", "--summary", "testing"], cwd=t.tmpdir)
@@ -330,6 +337,7 @@ if __name__ == "__main__":
 
     tests = [
         test_init,
+        test_version,
         test_pulse,
         test_task_lifecycle,
         test_task_assign,

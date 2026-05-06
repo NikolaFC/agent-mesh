@@ -6,6 +6,7 @@ import os
 import sys
 from pathlib import Path
 
+VERSION = "0.2.0"
 PULSE_SCHEMA_ID = "agent-mesh/pulse/v1"
 TASK_SCHEMA_ID = "agent-mesh/task/v1"
 
@@ -1681,6 +1682,7 @@ def cmd_evolution_index(args):
 
 def build_parser():
     parser = argparse.ArgumentParser(prog="mesh", description="Agent Mesh CLI")
+    parser.add_argument("--version", action="version", version=f"Agent Mesh {VERSION}")
     sub = parser.add_subparsers(dest="command")
 
     p_init = sub.add_parser("init", help="Initialize .mesh directory")

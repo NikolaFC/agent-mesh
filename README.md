@@ -2,6 +2,8 @@
 
 **A lightweight protocol for multi-agent collaboration.**
 
+Current version: **0.2.0**. See [`CHANGELOG.md`](CHANGELOG.md).
+
 > When you use OpenClaw + Codex + Claude Code on the same project, each agent is an island. Agent Mesh is the bridge.
 
 [中文文档](README.zh-CN.md)
@@ -94,6 +96,7 @@ git clone https://github.com/NikolaFC/agent-mesh.git
 cd agent-mesh
 chmod +x cli/mesh
 ln -s $(pwd)/cli/mesh /usr/local/bin/mesh
+mesh --version
 
 # Or copy the CLI script directly
 cp cli/mesh /usr/local/bin/mesh
@@ -115,6 +118,7 @@ export MESH_ROOT=/path/to/project/root
 
 | Command | Description |
 |---------|-------------|
+| `mesh --version` | Print Agent Mesh version |
 | `mesh init` | Initialize `.mesh/` directory with schemas |
 | `mesh status` | Overview of all agents + active tasks |
 | `mesh export [-o file]` | Export status as markdown report |

@@ -234,6 +234,10 @@ mesh sync --source github --repo owner/repo  # Update PR statuses
 
 ## Versioning
 
+Current Agent Mesh package version: `0.2.0`.
+
+Use `mesh --version` to inspect the installed CLI version. See [`CHANGELOG.md`](CHANGELOG.md) for release notes.
+
 This protocol follows SemVer:
 - **v1.x**: Current specification
 - Breaking changes bump major version

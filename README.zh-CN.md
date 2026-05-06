@@ -2,6 +2,8 @@
 
 **轻量级多 Agent 协作协议。**
 
+当前版本：**0.2.0**。详见 [`CHANGELOG.md`](CHANGELOG.md)。
+
 > 当你在同一个项目里用 OpenClaw + Codex + Claude Code，每个 Agent 都是孤岛。Agent Mesh 是桥梁。
 
 ## 解决什么问题
@@ -96,6 +98,7 @@ git clone https://github.com/NikolaFC/agent-mesh.git
 cd agent-mesh
 chmod +x cli/mesh
 ln -s $(pwd)/cli/mesh /usr/local/bin/mesh
+mesh --version
 
 # 或者直接复制 CLI 脚本
 cp cli/mesh /usr/local/bin/mesh
@@ -117,6 +120,7 @@ export MESH_ROOT=/path/to/project/root
 
 | 命令 | 说明 |
 |------|------|
+| `mesh --version` | 输出 Agent Mesh 版本号 |
 | `mesh init` | 初始化 `.mesh/` 目录 |
 | `mesh status` | 查看所有 Agent + 活跃 task 概览 |
 | `mesh export [-o file]` | 导出 markdown 状态报告 |
