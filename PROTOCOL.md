@@ -171,8 +171,9 @@ Current blockers requiring human decision. Updated as blockers are added/resolve
 ```bash
 # Pulse operations
 mesh pulse update --agent <name> --status <status> [--task <id>] [--summary <text>]
+mesh pulse touch --agent <name> [--summary <text>]  # Freshness only; keep task/status
 mesh pulse read [--agent <name>] [--all]
-mesh pulse check          # Returns agents that haven't updated in > 30min
+mesh pulse check [--strict] [--json] [--stale-minutes <n>]
 
 # Task operations
 mesh task create --id <id> --title <title> --type <type> [--assign <agent>]
@@ -190,10 +191,13 @@ mesh shared update <file> --content <text>  # Replace content
 mesh init              # Initialize .mesh/ in current repo
 mesh status            # Overview of all agents + active tasks
 mesh sync              # Refresh pulse data from external sources (e.g., GitHub PRs)
-mesh validate          # Check all files against schemas
+mesh validate [--json] # Check all files against schemas
+mesh doctor [--fix-safe] [--json] # Safe mechanical hygiene repairs
 ```
 
 ## Integration Patterns
+
+Before wiring a new runtime, read the first-install runbook: [`docs/runbooks/agent-first-install.md`](docs/runbooks/agent-first-install.md). Agent Mesh core does not automatically modify an agent's prompt, heartbeat, cron, scheduler, or alert delivery; those are host-side responsibilities.
 
 ### Pattern 1: Agent Prompt Embedding
 Add to any agent's system prompt:

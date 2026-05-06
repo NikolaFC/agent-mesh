@@ -46,12 +46,17 @@ Agent Mesh is a **file-based shared state layer**. Any agent that can read/write
 # 1. Initialize in your project
 mesh init
 
-# 2. Add to any agent's prompt:
+# 2. Read the first-install runbook for agent-side wiring:
+#    docs/runbooks/agent-first-install.md
+
+# 3. Add to any agent's prompt:
 #    "Before starting, read .mesh/pulse/*.json and .mesh/tasks/active/*.json.
 #     After completing work, update your pulse and task history."
 
-# 3. That's it. Agents now share state.
+# 4. That's it. Agents now share state.
 ```
+
+**Important:** Agent Mesh core only provides the shared state layer. Each agent must still wire Mesh into its own startup prompt, heartbeat/watchdog, task lifecycle, and alert delivery. See the required first-install runbook: [`docs/runbooks/agent-first-install.md`](docs/runbooks/agent-first-install.md).
 
 ## What Gets Shared
 
@@ -115,7 +120,8 @@ export MESH_ROOT=/path/to/project/root
 | `mesh export [-o file]` | Export status as markdown report |
 | `mesh pulse read [--all]` | Read agent pulse(s) |
 | `mesh pulse update` | Update your agent's pulse |
-| `mesh pulse check` | Find stale agents (no update in 30min) |
+| `mesh pulse touch` | Refresh pulse freshness without changing task/status |
+| `mesh pulse check [--strict --json]` | Find stale agents (no update in 30min) |
 | `mesh pulse clean` | Remove stale done/idle pulses |
 | `mesh task create` | Create a new task |
 | `mesh task update` | Update task status/verdict/progress |
@@ -127,7 +133,8 @@ export MESH_ROOT=/path/to/project/root
 | `mesh shared read` | Read shared knowledge file |
 | `mesh shared append` | Append to shared file (append-only) |
 | `mesh shared update` | Replace shared file content |
-| `mesh validate` | Validate all .mesh files against schemas |
+| `mesh validate [--json]` | Validate all .mesh files against schemas |
+| `mesh doctor [--fix-safe]` | Inspect or safely repair state hygiene |
 | `mesh sync [--repo]` | Sync PR status from GitHub |
 | `mesh evolution log` | Log an identity/preference/SOP change |
 | `mesh evolution read` | Read agent evolution logs |
@@ -138,6 +145,8 @@ export MESH_ROOT=/path/to/project/root
 | `mesh index` | Rebuild all indexes (tasks, pulses, evolution) |
 
 ## Agent Integration
+
+Before integrating any runtime, read the first-install runbook: [`docs/runbooks/agent-first-install.md`](docs/runbooks/agent-first-install.md). It separates Agent Mesh internals from host/agent-side operations such as prompt injection, pulse updates, watchdogs, and scheduler delivery.
 
 ### OpenClaw
 ```bash
@@ -236,9 +245,10 @@ See [`.github/workflows/mesh-sync.yml`](.github/workflows/mesh-sync.yml) for the
 
 ```bash
 python3 tests/test_cli.py
+pytest -q tests/test_cli.py
 ```
 
-46 tests covering: init, pulse CRUD, task lifecycle, assign, search, shared files, validate, export, pulse clean, MESH_ROOT env, schema validation.
+Tests cover: init, pulse CRUD/touch, task lifecycle, assign, search, shared files, validate/json, export, pulse clean/check, MESH_ROOT env, schema validation, and doctor safe-fix behavior.
 
 ## Configuration
 

@@ -10,11 +10,19 @@ PULSE_SCHEMA_ID = "agent-mesh/pulse/v1"
 TASK_SCHEMA_ID = "agent-mesh/task/v1"
 
 PULSE_STATUS = {"idle", "working", "blocked", "reviewing", "done"}
-TASK_TYPES = {"upstream-pr", "feature", "bugfix", "investigation", "refactor", "docs", "ops", "research"}
-TASK_STATUS = {"open", "in-progress", "blocked", "review", "ci-pass", "ci-fail", "deployed", "merged", "closed", "archived"}
-TASK_VERDICTS = {"ADOPT", "REPAIR", "CLOSE", "pending"}
+PULSE_ACTIONS = {
+    "commit", "pr-created", "pr-updated", "ci-pass", "ci-fail", "deploy", "test", "review",
+    "blocked", "unblocked", "note", "config", "handoff",
+}
+TASK_TYPES = {"upstream-pr", "feature", "bugfix", "investigation", "refactor", "docs", "ops", "research", "coordination"}
+TASK_STATUS = {"open", "ready", "in-progress", "blocked", "review", "ci-pass", "ci-fail", "deployed", "merged", "closed", "archived", "done"}
+TASK_VERDICTS = {"ADOPT", "REPAIR", "CLOSE", "pending", "accepted", "superseded", "superseded-by-official-update"}
 TASK_PRIORITIES = {"critical", "high", "medium", "low"}
-TASK_ACTIONS = {"created", "started", "committed", "repaired", "validated", "deployed", "merged", "closed", "commented", "blocked", "unblocked", "tested", "reviewed"}
+TASK_ACTIONS = {
+    "created", "started", "committed", "repaired", "validated", "deployed", "merged", "closed",
+    "commented", "blocked", "unblocked", "tested", "reviewed", "confirmed", "updated", "superseded",
+}
+TERMINAL_TASK_STATUS = {"closed", "archived", "done", "merged", "deployed"}
 
 
 def now_iso():
@@ -396,31 +404,99 @@ def cmd_pulse_update(args):
     rebuild_indexes(root, paths)
 
 
-def cmd_pulse_check(_args):
+def cmd_pulse_touch(args):
+    if not is_agent_name(args.agent):
+        die("Invalid agent name. Use lowercase letters, digits, and hyphens.")
+
     root = require_mesh_root()
     paths = mesh_paths(root)
+    pulse_file = paths["pulse"] / f"{args.agent}.json"
+    existing = read_json(pulse_file) if pulse_file.exists() else {}
 
+    status = existing.get("status") if existing.get("status") in PULSE_STATUS else "idle"
+    data = {
+        "schema": PULSE_SCHEMA_ID,
+        "agent": args.agent,
+        "agentType": existing.get("agentType", "custom"),
+        "lastUpdate": now_iso(),
+        "status": status,
+        "blockers": existing.get("blockers", []),
+        "nextActions": existing.get("nextActions", []),
+    }
+    for key in ("currentTask", "contextChanges"):
+        if key in existing:
+            data[key] = existing[key]
+
+    actions = existing.get("recentActions", [])
+    if not isinstance(actions, list):
+        actions = []
+    if args.summary:
+        actions.append({"type": "note", "summary": args.summary, "at": now_iso()})
+    if actions:
+        data["recentActions"] = actions[-10:]
+
+    write_json(pulse_file, data)
+    success(f"✅ Touched pulse for {args.agent}")
+    rebuild_indexes(root, paths)
+
+
+def collect_stale_pulses(paths, stale_minutes=30):
     now = datetime.datetime.now(datetime.timezone.utc)
     stale = []
 
     for pf in collect_pulse_files(paths):
         data = read_json(pf)
         ts = parse_iso(data.get("lastUpdate"))
+        agent = data.get("agent", pf.stem)
         if ts is None:
-            stale.append((data.get("agent", pf.stem), "invalid timestamp"))
+            stale.append({
+                "agent": agent,
+                "status": data.get("status", "unknown"),
+                "lastUpdate": data.get("lastUpdate"),
+                "ageMinutes": None,
+                "reason": "invalid timestamp",
+            })
             continue
         age = now - ts.astimezone(datetime.timezone.utc)
-        if age > datetime.timedelta(minutes=30):
+        if age > datetime.timedelta(minutes=stale_minutes):
             mins = int(age.total_seconds() // 60)
-            stale.append((data.get("agent", pf.stem), f"{mins}m"))
+            stale.append({
+                "agent": agent,
+                "status": data.get("status", "unknown"),
+                "lastUpdate": data.get("lastUpdate"),
+                "ageMinutes": mins,
+                "reason": f"stale >{stale_minutes}m",
+            })
+    return stale
 
-    if not stale:
-        success("✅ All agents updated within 30 minutes")
+
+def cmd_pulse_check(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+
+    threshold = getattr(args, "stale_minutes", 30) or 30
+    stale = collect_stale_pulses(paths, stale_minutes=threshold)
+
+    if getattr(args, "json", False):
+        print(json.dumps({
+            "ok": not stale,
+            "thresholdMinutes": threshold,
+            "stale": stale,
+        }, ensure_ascii=False, indent=2))
+        if stale and getattr(args, "strict", False):
+            raise SystemExit(1)
         return
 
-    warn("🚫 Stale agents (>30m):")
-    for agent, age in stale:
-        print(f"  - {agent}: {age}")
+    if not stale:
+        success(f"✅ All agents updated within {threshold} minutes")
+        return
+
+    warn(f"🚫 Stale agents (>{threshold}m):")
+    for item in stale:
+        age = "invalid timestamp" if item["ageMinutes"] is None else f"{item['ageMinutes']}m"
+        print(f"  - {item['agent']}: {age}")
+    if getattr(args, "strict", False):
+        raise SystemExit(1)
 
 
 def load_task(paths, task_id):
@@ -752,41 +828,221 @@ def cmd_export(args):
         print(output)
 
 
-def cmd_validate(_args):
-    root = require_mesh_root()
-    paths = mesh_paths(root)
-
+def collect_validation_errors(paths):
     project_root = Path(__file__).resolve().parent.parent
     pulse_schema = read_json(project_root / "schema" / "pulse-v1.json")
     task_schema = read_json(project_root / "schema" / "task-v1.json")
 
-    any_error = False
-
-    pulse_files = collect_pulse_files(paths)
-    task_files = collect_task_files(paths, include_archived=True)
-
-    for pf in pulse_files:
+    invalid = []
+    for pf in collect_pulse_files(paths):
         data = read_json(pf)
         errs = validate_by_schema(data, pulse_schema)
         if errs:
-            any_error = True
-            fail(f"❌ {pf}")
-            for e in errs:
-                print(f"   - {e}")
+            invalid.append({"kind": "pulse", "path": str(pf), "errors": errs})
 
-    for tf in task_files:
+    for tf in collect_task_files(paths, include_archived=True):
         data = read_json(tf)
         errs = validate_by_schema(data, task_schema)
         if errs:
-            any_error = True
-            fail(f"❌ {tf}")
-            for e in errs:
-                print(f"   - {e}")
+            invalid.append({"kind": "task", "path": str(tf), "errors": errs})
+    return invalid
 
-    if any_error:
+
+def cmd_validate(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    invalid = collect_validation_errors(paths)
+
+    if getattr(args, "json", False):
+        print(json.dumps({"ok": not invalid, "invalid": invalid}, ensure_ascii=False, indent=2))
+        if invalid:
+            raise SystemExit(1)
+        return
+
+    for item in invalid:
+        fail(f"❌ {item['path']}")
+        for e in item["errors"]:
+            print(f"   - {e}")
+
+    if invalid:
         raise SystemExit(1)
 
     success("✅ Validation passed")
+
+
+def normalize_legacy_task(task, task_id):
+    """Add missing v1 fields / safe aliases without changing business conclusions."""
+    changed = []
+    now = now_iso()
+
+    defaults = {
+        "schema": TASK_SCHEMA_ID,
+        "id": task_id,
+        "type": "ops",
+        "title": task_id,
+        "status": "open",
+        "verdict": "pending",
+        "priority": "medium",
+        "assignedTo": task.get("assignee") or "openclaw",
+        "createdAt": task.get("created") or task.get("updatedAt") or task.get("updated") or now,
+        "updatedAt": task.get("updatedAt") or task.get("updated") or now,
+    }
+    for key, value in defaults.items():
+        if key not in task or task.get(key) in {None, ""}:
+            task[key] = value
+            changed.append(f"set {key}")
+
+    priority_aliases = {"P0": "critical", "P1": "high", "P2": "medium", "P3": "low"}
+    if task.get("priority") in priority_aliases:
+        old = task["priority"]
+        task["priority"] = priority_aliases[old]
+        changed.append(f"priority {old}->{task['priority']}")
+    elif task.get("priority") not in TASK_PRIORITIES:
+        old = task.get("priority")
+        task["priority"] = "medium"
+        changed.append(f"priority {old}->medium")
+
+    if task.get("type") not in TASK_TYPES:
+        old = task.get("type")
+        task["type"] = "ops"
+        changed.append(f"type {old}->ops")
+    if task.get("status") not in TASK_STATUS:
+        old = task.get("status")
+        task["status"] = "open"
+        changed.append(f"status {old}->open")
+    if task.get("verdict") not in TASK_VERDICTS:
+        old = task.get("verdict")
+        task["verdict"] = "pending"
+        changed.append(f"verdict {old}->pending")
+    if "progress" not in task:
+        task["progress"] = 1.0 if task.get("status") in TERMINAL_TASK_STATUS else 0.0
+        changed.append("set progress")
+
+    history = task.get("history")
+    if not isinstance(history, list):
+        task["history"] = []
+        changed.append("set history")
+    else:
+        for entry in history:
+            if not isinstance(entry, dict):
+                continue
+            if not entry.get("agent"):
+                entry["agent"] = task.get("assignedTo") or "openclaw"
+                changed.append("fill history agent")
+            if not entry.get("at"):
+                entry["at"] = task.get("updatedAt") or now
+                changed.append("fill history at")
+            if entry.get("action") not in TASK_ACTIONS:
+                old = entry.get("action")
+                entry["action"] = "commented"
+                changed.append(f"history action {old}->commented")
+
+    return changed
+
+
+def runtime_snapshot():
+    import shutil
+    import subprocess
+    exe = shutil.which("openclaw") or ""
+    resolved = ""
+    version = ""
+    if exe:
+        try:
+            resolved = subprocess.run(["readlink", "-f", exe], capture_output=True, text=True, timeout=5).stdout.strip()
+        except Exception:
+            resolved = ""
+        try:
+            version = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=10).stdout.strip()
+        except Exception:
+            version = ""
+    return {"openclawExecutable": exe, "openclawResolvedPath": resolved, "openclawVersion": version}
+
+
+def update_runtime_snapshot(paths):
+    context = paths["shared"] / "context.md"
+    if not context.exists():
+        return []
+    snap = runtime_snapshot()
+    block = (
+        "<!-- agent-mesh-runtime-snapshot:start -->\n"
+        "## Runtime Snapshot (auto-managed)\n\n"
+        f"- OpenClaw version: `{snap.get('openclawVersion') or 'unknown'}`\n"
+        f"- OpenClaw executable: `{snap.get('openclawExecutable') or 'unknown'}`\n"
+        f"- OpenClaw resolved path: `{snap.get('openclawResolvedPath') or 'unknown'}`\n"
+        "<!-- agent-mesh-runtime-snapshot:end -->\n"
+    )
+    text = read_text(context)
+    start = "<!-- agent-mesh-runtime-snapshot:start -->"
+    end = "<!-- agent-mesh-runtime-snapshot:end -->"
+    if start in text and end in text:
+        before, rest = text.split(start, 1)
+        _, after = rest.split(end, 1)
+        new_text = before + block + after.lstrip("\n")
+    else:
+        marker = "## OpenClaw Workspace\n"
+        if marker in text:
+            new_text = text.replace(marker, marker + "\n" + block + "\n", 1)
+        else:
+            new_text = text.rstrip() + "\n\n" + block
+    if new_text != text:
+        write_text(context, new_text)
+        return ["updated runtime snapshot"]
+    return []
+
+
+def cmd_doctor(args):
+    root = require_mesh_root()
+    paths = mesh_paths(root)
+    fix_safe = getattr(args, "fix_safe", False)
+    report = {"ok": True, "fixed": [], "warnings": []}
+
+    for task_file in list(collect_task_files(paths, include_archived=False)):
+        task = read_json(task_file)
+        changes = normalize_legacy_task(task, task.get("id") or task_file.stem)
+        terminal = task.get("status") in TERMINAL_TASK_STATUS
+
+        if changes and fix_safe:
+            write_json(task_file, task)
+            report["fixed"].append({"path": str(task_file), "changes": changes})
+        elif changes:
+            report["warnings"].append({"path": str(task_file), "changesAvailable": changes})
+
+        if terminal:
+            dst = paths["archived"] / task_file.name
+            if fix_safe:
+                if dst.exists():
+                    report["warnings"].append({"path": str(task_file), "issue": f"archive target exists: {dst}"})
+                else:
+                    task_file.rename(dst)
+                    report["fixed"].append({"path": str(task_file), "changes": [f"moved terminal task to {dst}"]})
+            else:
+                report["warnings"].append({"path": str(task_file), "issue": f"terminal task still active: {task.get('status')}"})
+
+    if fix_safe:
+        runtime_changes = update_runtime_snapshot(paths)
+        if runtime_changes:
+            report["fixed"].append({"path": str(paths["shared"] / "context.md"), "changes": runtime_changes})
+        rebuild_indexes(root, paths)
+
+    invalid = collect_validation_errors(paths)
+    if invalid:
+        report["ok"] = False
+        report["validationErrors"] = invalid
+
+    if getattr(args, "json", False):
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        if not report["ok"]:
+            raise SystemExit(1)
+        return
+
+    for item in report["fixed"]:
+        info(f"🔧 {item['path']}: {', '.join(item['changes'])}")
+    for item in report["warnings"]:
+        warn(f"⚠️  {item}")
+    if invalid:
+        warn(f"🚫 Validation still has {len(invalid)} invalid file(s)")
+        raise SystemExit(1)
+    success("✅ Doctor complete")
 
 
 def gh_json(args_str):
@@ -1448,7 +1704,15 @@ def build_parser():
     p_pulse_update.add_argument("--summary", help="Recent action summary")
     p_pulse_update.set_defaults(func=cmd_pulse_update)
 
+    p_pulse_touch = pulse_sub.add_parser("touch", help="Refresh an agent pulse without changing task/status")
+    p_pulse_touch.add_argument("--agent", required=True, help="Agent name")
+    p_pulse_touch.add_argument("--summary", help="Optional note to append")
+    p_pulse_touch.set_defaults(func=cmd_pulse_touch)
+
     p_pulse_check = pulse_sub.add_parser("check", help="Find stale pulses (>30m)")
+    p_pulse_check.add_argument("--stale-minutes", type=int, default=30, help="Stale threshold in minutes (default: 30)")
+    p_pulse_check.add_argument("--strict", action="store_true", help="Exit non-zero when stale agents are found")
+    p_pulse_check.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     p_pulse_check.set_defaults(func=cmd_pulse_check)
 
     p_pulse_clean = pulse_sub.add_parser("clean", help="Remove stale done/idle pulses")
@@ -1519,7 +1783,13 @@ def build_parser():
     p_shared_update.set_defaults(func=cmd_shared_update)
 
     p_validate = sub.add_parser("validate", help="Validate all pulse/task JSON files")
+    p_validate.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     p_validate.set_defaults(func=cmd_validate)
+
+    p_doctor = sub.add_parser("doctor", help="Inspect or safely repair mesh state hygiene")
+    p_doctor.add_argument("--fix-safe", action="store_true", help="Apply safe fixes: schema backfill, terminal-task archive, runtime snapshot, indexes")
+    p_doctor.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    p_doctor.set_defaults(func=cmd_doctor)
 
     p_sync = sub.add_parser("sync", help="Sync PR status from GitHub")
     p_sync.add_argument("--repo", help="GitHub repo (owner/name). Auto-detects from git remote if omitted.")

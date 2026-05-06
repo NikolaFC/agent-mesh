@@ -17,11 +17,14 @@ OpenClaw 和 Hermes 是**对等关系**——各自独立运行，通过 Agent M
 
 ## 接入步骤
 
+首次接入任意 Agent 前，先读项目包内 runbook：[`../../docs/runbooks/agent-first-install.md`](../../docs/runbooks/agent-first-install.md)。它专门记录 Agent Mesh 之外、但每个 Agent 必须完成的接入动作。
+
 ### 1. 确保 mesh CLI 可用
 
 ```bash
 # 两个实例都需要
-mesh --version  # 应该输出版本信息
+command -v mesh
+mesh status
 ```
 
 ### 2. 设置环境变量
@@ -38,6 +41,12 @@ export MESH_ROOT=<workspace根目录>
 - Heartbeat 自动跑 `mesh pulse check`
 - 发现 stale/blocked agent 时汇报
 - 随时 `mesh status` 查看全部状态
+
+建议补齐：
+- Heartbeat 开始时先 `mesh pulse touch --agent openclaw --summary "heartbeat"`
+- Watchdog/cron 使用 `mesh doctor --fix-safe --json` + `mesh pulse check --strict --json` + `mesh validate --json`
+- 告警投递交给 OpenClaw cron delivery，不要在 watchdog 脚本里直接发消息
+- 如果本地有 cron/model guard，新增 watchdog job 后要登记白名单，避免模型被自动回滚
 
 ### 4. Hermes 侧接入
 

@@ -19,7 +19,7 @@
     },
     "type": {
       "type": "string",
-      "enum": ["upstream-pr", "feature", "bugfix", "investigation", "refactor", "docs", "ops", "research"]
+      "enum": ["upstream-pr", "feature", "bugfix", "investigation", "refactor", "docs", "ops", "research", "coordination"]
     },
     "title": {
       "type": "string",
@@ -32,12 +32,12 @@
     },
     "status": {
       "type": "string",
-      "enum": ["open", "in-progress", "blocked", "review", "ci-pass", "ci-fail", "deployed", "merged", "closed", "archived"],
+      "enum": ["open", "ready", "in-progress", "blocked", "review", "ci-pass", "ci-fail", "deployed", "merged", "closed", "archived", "done"],
       "description": "Current task status"
     },
     "verdict": {
       "type": "string",
-      "enum": ["ADOPT", "REPAIR", "CLOSE", "pending"],
+      "enum": ["ADOPT", "REPAIR", "CLOSE", "pending", "accepted", "superseded", "superseded-by-official-update"],
       "description": "Decision verdict for PRs or evaluations"
     },
     "priority": {
@@ -85,7 +85,7 @@
           },
           "action": {
             "type": "string",
-            "enum": ["created", "started", "committed", "repaired", "validated", "deployed", "merged", "closed", "commented", "blocked", "unblocked", "tested", "reviewed"]
+            "enum": ["created", "started", "committed", "repaired", "validated", "deployed", "merged", "closed", "commented", "blocked", "unblocked", "tested", "reviewed", "confirmed", "updated", "superseded"]
           },
           "summary": {
             "type": "string",

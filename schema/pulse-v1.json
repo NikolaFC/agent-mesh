@@ -62,7 +62,7 @@
         "properties": {
           "type": {
             "type": "string",
-            "enum": ["commit", "pr-created", "pr-updated", "ci-pass", "ci-fail", "deploy", "test", "review", "blocked", "unblocked", "note"]
+            "enum": ["commit", "pr-created", "pr-updated", "ci-pass", "ci-fail", "deploy", "test", "review", "blocked", "unblocked", "note", "config", "handoff"]
           },
           "ref": {
             "type": "string",

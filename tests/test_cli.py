@@ -31,7 +31,7 @@ def run(args, cwd=None, expect_rc=0):
     return r.returncode, r.stdout, r.stderr
 
 
-def test(name):
+def case(name):
     """Test context manager."""
     class Ctx:
         def __enter__(self):
@@ -58,7 +58,7 @@ def check(cond, msg):
 # ── Tests ──────────────────────────────────────────────────────
 
 def test_init():
-    with test("init creates .mesh structure") as t:
+    with case("init creates .mesh structure") as t:
         mesh = Path(t.tmpdir) / ".mesh"
         check(mesh.is_dir(), ".mesh/ created")
         check((mesh / "pulse").is_dir(), "pulse/ created")
@@ -70,7 +70,7 @@ def test_init():
 
 
 def test_pulse():
-    with test("pulse update + read") as t:
+    with case("pulse update + read") as t:
         rc, out, _ = run(["pulse", "update", "--agent", "testbot", "--status", "working", "--summary", "testing"], cwd=t.tmpdir)
         check(rc == 0, "pulse update succeeds")
         check((Path(t.tmpdir) / ".mesh" / "pulse" / "testbot.json").exists(), "pulse file created")
@@ -84,7 +84,7 @@ def test_pulse():
 
 
 def test_task_lifecycle():
-    with test("task create → update → history → archive") as t:
+    with case("task create → update → history → archive") as t:
         rc, _, _ = run(["task", "create", "--id", "test-1", "--title", "Test task", "--type", "feature", "--assign", "alice"], cwd=t.tmpdir)
         check(rc == 0, "task create")
 
@@ -106,7 +106,7 @@ def test_task_lifecycle():
 
 
 def test_task_assign():
-    with test("task assign") as t:
+    with case("task assign") as t:
         run(["task", "create", "--id", "reassign-1", "--title", "Reassign me", "--type", "feature", "--assign", "alice"], cwd=t.tmpdir)
         rc, _, _ = run(["task", "assign", "--id", "reassign-1", "--agent", "bob"], cwd=t.tmpdir)
         check(rc == 0, "task assign succeeds")
@@ -118,7 +118,7 @@ def test_task_assign():
 
 
 def test_task_search():
-    with test("task search") as t:
+    with case("task search") as t:
         run(["task", "create", "--id", "search-1", "--title", "Fix the cache layer", "--type", "bugfix", "--assign", "alice"], cwd=t.tmpdir)
         run(["task", "create", "--id", "search-2", "--title", "Add auth module", "--type", "feature", "--assign", "bob"], cwd=t.tmpdir)
 
@@ -129,7 +129,7 @@ def test_task_search():
 
 
 def test_shared():
-    with test("shared read/append/update") as t:
+    with case("shared read/append/update") as t:
         rc, out, _ = run(["shared", "read", "context.md"], cwd=t.tmpdir)
         check(rc == 0, "shared read")
         check("Shared Context" in out, "context.md has expected content")
@@ -145,14 +145,18 @@ def test_shared():
 
 
 def test_validate():
-    with test("validate passes on fresh init") as t:
+    with case("validate passes on fresh init") as t:
         rc, out, _ = run(["validate"], cwd=t.tmpdir)
         check(rc == 0, "validate succeeds")
         check("passed" in out.lower(), "reports passed")
 
+        rc, out, _ = run(["validate", "--json"], cwd=t.tmpdir)
+        check(rc == 0, "validate json succeeds")
+        check(json.loads(out)["ok"] is True, "validate json reports ok")
+
 
 def test_export():
-    with test("export markdown report") as t:
+    with case("export markdown report") as t:
         run(["pulse", "update", "--agent", "bot1", "--status", "idle"], cwd=t.tmpdir)
         run(["task", "create", "--id", "exp-1", "--title", "Export test", "--type", "feature"], cwd=t.tmpdir)
 
@@ -164,7 +168,7 @@ def test_export():
 
 
 def test_export_to_file():
-    with test("export to file") as t:
+    with case("export to file") as t:
         outfile = Path(t.tmpdir) / "report.md"
         rc, _, _ = run(["export", "--output", str(outfile)], cwd=t.tmpdir)
         check(rc == 0, "export to file succeeds")
@@ -172,7 +176,7 @@ def test_export_to_file():
 
 
 def test_pulse_clean():
-    with test("pulse clean") as t:
+    with case("pulse clean") as t:
         # Create a pulse with old timestamp
         pulse_file = Path(t.tmpdir) / ".mesh" / "pulse" / "stale-bot.json"
         pulse_file.write_text(json.dumps({
@@ -188,7 +192,7 @@ def test_pulse_clean():
 
 
 def test_pulse_clean_skips_working():
-    with test("pulse clean skips working agents") as t:
+    with case("pulse clean skips working agents") as t:
         pulse_file = Path(t.tmpdir) / ".mesh" / "pulse" / "busy-bot.json"
         pulse_file.write_text(json.dumps({
             "schema": "agent-mesh/pulse/v1",
@@ -202,8 +206,42 @@ def test_pulse_clean_skips_working():
         check(pulse_file.exists(), "working pulse NOT removed")
 
 
+def test_pulse_touch_and_strict_check():
+    with case("pulse touch + strict/json check") as t:
+        run(["pulse", "update", "--agent", "touchbot", "--status", "working", "--task", "task-1", "--summary", "started"], cwd=t.tmpdir)
+        rc, out, _ = run(["pulse", "touch", "--agent", "touchbot", "--summary", "heartbeat"], cwd=t.tmpdir)
+        check(rc == 0, "pulse touch succeeds")
+
+        pulse_file = Path(t.tmpdir) / ".mesh" / "pulse" / "touchbot.json"
+        data = json.loads(pulse_file.read_text())
+        check(data["status"] == "working", "touch preserves status")
+        check(data["currentTask"]["id"] == "task-1", "touch preserves task")
+
+        # Force staleness and verify strict/json mode exits non-zero.
+        data["lastUpdate"] = "2020-01-01T00:00:00Z"
+        pulse_file.write_text(json.dumps(data))
+        rc, out, _ = run(["pulse", "check", "--strict", "--json", "--stale-minutes", "1"], cwd=t.tmpdir, expect_rc=1)
+        check(rc == 1, "strict check returns non-zero on stale")
+        parsed = json.loads(out)
+        check(parsed["ok"] is False and parsed["stale"][0]["agent"] == "touchbot", "strict json reports stale agent")
+
+
+def test_doctor_safe_fix_archives_terminal():
+    with case("doctor --fix-safe archives terminal tasks") as t:
+        run(["task", "create", "--id", "done-1", "--title", "Done", "--type", "feature", "--assign", "alice"], cwd=t.tmpdir)
+        run(["task", "update", "--id", "done-1", "--status", "closed", "--progress", "1"], cwd=t.tmpdir)
+        rc, out, _ = run(["doctor", "--fix-safe", "--json"], cwd=t.tmpdir)
+        check(rc == 0, "doctor safe-fix succeeds")
+        check(json.loads(out)["ok"] is True, "doctor reports ok")
+
+        active = Path(t.tmpdir) / ".mesh" / "tasks" / "active" / "done-1.json"
+        archived = Path(t.tmpdir) / ".mesh" / "tasks" / "archived" / "done-1.json"
+        check(not active.exists(), "terminal task removed from active")
+        check(archived.exists(), "terminal task moved to archive")
+
+
 def test_status():
-    with test("status overview") as t:
+    with case("status overview") as t:
         run(["pulse", "update", "--agent", "alpha", "--status", "working"], cwd=t.tmpdir)
         run(["task", "create", "--id", "st-1", "--title", "Status test", "--type", "feature"], cwd=t.tmpdir)
 
@@ -214,7 +252,7 @@ def test_status():
 
 
 def test_mesh_root_env():
-    with test("MESH_ROOT env var") as t:
+    with case("MESH_ROOT env var") as t:
         # Run from a different directory, using MESH_ROOT
         other = tempfile.mkdtemp()
         try:
@@ -227,7 +265,7 @@ def test_mesh_root_env():
 
 
 def test_evolution_log():
-    with test("evolution log + read") as t:
+    with case("evolution log + read") as t:
         rc, _, _ = run(["evolution", "log", "--agent", "hermes", "--file", "AGENTS.md", "--category", "sop", "--summary", "Added mesh workflow"], cwd=t.tmpdir)
         check(rc == 0, "evolution log succeeds")
 
@@ -241,7 +279,7 @@ def test_evolution_log():
 
 
 def test_evolution_multiple_entries():
-    with test("evolution multiple entries") as t:
+    with case("evolution multiple entries") as t:
         run(["evolution", "log", "--agent", "hermes", "--file", "USER.md", "--summary", "Change 1"], cwd=t.tmpdir)
         run(["evolution", "log", "--agent", "hermes", "--file", "SOUL.md", "--summary", "Change 2"], cwd=t.tmpdir)
         run(["evolution", "log", "--agent", "openclaw", "--file", "AGENTS.md", "--summary", "Change 3"], cwd=t.tmpdir)
@@ -258,7 +296,7 @@ def test_evolution_multiple_entries():
 
 
 def test_evolution_sync():
-    with test("evolution sync") as t:
+    with case("evolution sync") as t:
         run(["evolution", "log", "--agent", "hermes", "--file", "AGENTS.md", "--summary", "Hermes learned something"], cwd=t.tmpdir)
         run(["evolution", "log", "--agent", "openclaw", "--file", "HEARTBEAT.md", "--summary", "OpenClaw learned something"], cwd=t.tmpdir)
 
@@ -274,7 +312,7 @@ def test_evolution_sync():
 
 
 def test_schema_validation():
-    with test("schema validation catches bad data") as t:
+    with case("schema validation catches bad data") as t:
         # Write a bad pulse file (missing required fields)
         bad = Path(t.tmpdir) / ".mesh" / "pulse" / "bad.json"
         bad.write_text('{"schema": "wrong"}')
@@ -302,6 +340,8 @@ if __name__ == "__main__":
         test_export_to_file,
         test_pulse_clean,
         test_pulse_clean_skips_working,
+        test_pulse_touch_and_strict_check,
+        test_doctor_safe_fix_archives_terminal,
         test_status,
         test_mesh_root_env,
         test_evolution_log,

@@ -44,12 +44,17 @@ Agent Mesh 是一个**基于文件的共享状态层**。任何能读写文件�
 # 1. 在你的项目里初始化
 mesh init
 
-# 2. 在任意 Agent 的 prompt 里加上：
+# 2. 先读首次安装 runbook，完成 Agent 侧接入：
+#    docs/runbooks/agent-first-install.md
+
+# 3. 在任意 Agent 的 prompt 里加上：
 #    "开始前，读 .mesh/pulse/*.json 和 .mesh/tasks/active/*.json。
 #     完成工作后，更新你的 pulse 和 task history。"
 
-# 3. 就这样，Agent 之间现在能共享状态了
+# 4. 就这样，Agent 之间现在能共享状态了
 ```
+
+**重要：** Agent Mesh core 只提供共享状态层；每个 Agent 仍然需要把 Mesh 接入自己的启动 prompt、heartbeat/watchdog、任务生命周期和告警投递。首次接入必读：[`docs/runbooks/agent-first-install.md`](docs/runbooks/agent-first-install.md)。
 
 ## 共享什么
 
@@ -117,7 +122,8 @@ export MESH_ROOT=/path/to/project/root
 | `mesh export [-o file]` | 导出 markdown 状态报告 |
 | `mesh pulse read [--all]` | 读取 Agent pulse |
 | `mesh pulse update` | 更新你的 Agent pulse |
-| `mesh pulse check` | 查找超时 Agent（30 分钟无更新） |
+| `mesh pulse touch` | 只刷新 pulse 时间，不改变任务/状态 |
+| `mesh pulse check [--strict --json]` | 查找超时 Agent（30 分钟无更新） |
 | `mesh pulse clean` | 清理过期的 done/idle pulse |
 | `mesh task create` | 创建新 task |
 | `mesh task update` | 更新 task 状态/verdict/进度 |
@@ -129,13 +135,16 @@ export MESH_ROOT=/path/to/project/root
 | `mesh shared read` | 读取共享知识文件 |
 | `mesh shared append` | 追加到共享文件（仅追加） |
 | `mesh shared update` | 替换共享文件内容 |
-| `mesh validate` | 校验所有 .mesh 文件 |
+| `mesh validate [--json]` | 校验所有 .mesh 文件 |
+| `mesh doctor [--fix-safe]` | 检查或安全修复状态卫生 |
 | `mesh sync [--repo]` | 从 GitHub 同步 PR 状态 |
 | `mesh evolution log` | 记录身份/偏好/SOP 变更 |
 | `mesh evolution read` | 读取 agent 进化日志 |
 | `mesh evolution sync` | 查看其他 agent 的最近变更 |
 
 ## Agent 集成
+
+接入任何 Agent runtime 前，先读首次安装 runbook：[`docs/runbooks/agent-first-install.md`](docs/runbooks/agent-first-install.md)。它专门区分 Agent Mesh 内部能力与 Agent/宿主侧操作，例如 prompt 注入、pulse 更新、watchdog、scheduler 投递。
 
 ### OpenClaw
 
@@ -196,9 +205,10 @@ cp .github/workflows/mesh-sync.yml <your-repo>/.github/workflows/
 
 ```bash
 python3 tests/test_cli.py
+pytest -q tests/test_cli.py
 ```
 
-46 个测试覆盖：init、pulse CRUD、task 生命周期、assign、search、shared 文件、validate、export、pulse clean、MESH_ROOT 环境变量、schema 校验。
+测试覆盖：init、pulse CRUD/touch、task 生命周期、assign、search、shared 文件、validate/json、export、pulse clean/check、MESH_ROOT 环境变量、schema 校验、doctor 安全修复。
 
 ## 为什么用文件？
 
