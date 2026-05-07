@@ -3,6 +3,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -114,6 +115,8 @@ def mesh_paths(root):
         "active": mesh / "tasks" / "active",
         "archived": mesh / "tasks" / "archived",
         "shared": mesh / "shared",
+        "status": mesh / "shared" / "status",
+        "historical": mesh / "shared" / "historical",
         "evolution": mesh / "shared" / "evolution",
     }
 
@@ -257,6 +260,8 @@ def cmd_init(_args):
         mesh / "tasks" / "active",
         mesh / "tasks" / "archived",
         mesh / "shared",
+        mesh / "shared" / "status",
+        mesh / "shared" / "historical",
         mesh / "shared" / "evolution",
     ]
     for d in dirs:
@@ -849,13 +854,121 @@ def collect_validation_errors(paths):
     return invalid
 
 
+def rel_mesh_path(path):
+    parts = path.parts
+    if ".mesh" in parts:
+        idx = parts.index(".mesh")
+        return "/".join(parts[idx:])
+    return str(path)
+
+
+def boundary_text_scores(text):
+    """Heuristic scores for advisory Memory-vs-Skill boundary warnings."""
+    sop_score = 0
+    status_score = 0
+    numbered_or_checklist = 0
+    has_command_or_code = False
+    has_procedure_heading = False
+
+    command_re = re.compile(
+        r"^(mesh|git|gh|python3?|node|npm|pnpm|uv|make|docker|curl|cd|export|sudo|systemctl|openclaw|hermes)\b"
+    )
+    procedure_heading_re = re.compile(
+        r"^#{1,6}\s+.*(sop|runbook|procedure|steps?|commands?|checklist|操作步骤|步骤|命令|检查清单)",
+        re.IGNORECASE,
+    )
+    numbered_re = re.compile(r"^\s*\d+[.)]\s+")
+    status_line_re = re.compile(
+        r"^\s*(status|issue|current|decision|context|consequences|resolution|resolved|blocked|next step|evidence|observed|root cause)\s*:",
+        re.IGNORECASE,
+    )
+    dated_heading_re = re.compile(r"^#{1,6}\s+\[?(resolved\s+)?\d{4}-\d{2}-\d{2}", re.IGNORECASE)
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        lower = stripped.lower()
+        if not stripped:
+            continue
+        if stripped.startswith("```"):
+            has_command_or_code = True
+            if "bash" in lower or "sh" in lower or "shell" in lower:
+                sop_score += 3
+            continue
+        if command_re.match(stripped):
+            sop_score += 3
+            has_command_or_code = True
+        if numbered_re.match(line) or stripped.startswith("- [ ]"):
+            sop_score += 1
+            numbered_or_checklist += 1
+        if procedure_heading_re.match(stripped):
+            sop_score += 3
+            has_procedure_heading = True
+        if any(token in lower for token in ("must run", "run `", "execute `", "copy the", "required command")):
+            sop_score += 1
+        if status_line_re.match(stripped):
+            status_score += 2
+        if dated_heading_re.match(stripped):
+            status_score += 2
+        if any(token in lower for token in ("active", "resolved", "superseded", "awaiting", "current production", "pr #", "ci passed", "ci failed")):
+            status_score += 1
+
+    return {
+        "sopScore": sop_score,
+        "statusScore": status_score,
+        "numberedOrChecklist": numbered_or_checklist,
+        "hasCommandOrCode": has_command_or_code,
+        "hasProcedureHeading": has_procedure_heading,
+    }
+
+
+def collect_boundary_warnings(paths):
+    """Advisory warnings for mixed memory/status vs SOP/reference content.
+
+    These warnings are intentionally light: they do not fail validation and they
+    never move content automatically. They only point agents at the right layer.
+    """
+    warnings = []
+
+    for name in ("context.md", "decisions.md", "blockers.md"):
+        path = paths["shared"] / name
+        if not path.exists():
+            continue
+        scores = boundary_text_scores(read_text(path))
+        if scores["sopScore"] >= 8 and (
+            scores["hasCommandOrCode"] or (scores["hasProcedureHeading"] and scores["numberedOrChecklist"] >= 3)
+        ):
+            warnings.append({
+                "kind": "boundary",
+                "path": rel_mesh_path(path),
+                "issue": "memory/status file contains substantial SOP-like steps or commands",
+                "suggestion": "Move reusable procedure material to .mesh/shared/sop/ or docs/guides; keep only thin facts/status and links here.",
+                "scores": scores,
+            })
+
+    sop_dir = paths["shared"] / "sop"
+    if sop_dir.is_dir():
+        for path in sorted(sop_dir.glob("*.md")):
+            scores = boundary_text_scores(read_text(path))
+            if scores["statusScore"] >= 8 and scores["sopScore"] < 6:
+                warnings.append({
+                    "kind": "boundary",
+                    "path": rel_mesh_path(path),
+                    "issue": "SOP/reference file looks mostly like one-off status, facts, or task history",
+                    "suggestion": "Move current truth to context/status/task history and leave only repeatable procedure/reference material in SOP.",
+                    "scores": scores,
+                })
+
+    return warnings
+
+
 def cmd_validate(args):
     root = require_mesh_root()
     paths = mesh_paths(root)
     invalid = collect_validation_errors(paths)
+    boundary_warnings = collect_boundary_warnings(paths)
 
     if getattr(args, "json", False):
-        print(json.dumps({"ok": not invalid, "invalid": invalid}, ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": not invalid, "invalid": invalid, "warnings": boundary_warnings}, ensure_ascii=False, indent=2))
         if invalid:
             raise SystemExit(1)
         return
@@ -864,6 +977,10 @@ def cmd_validate(args):
         fail(f"❌ {item['path']}")
         for e in item["errors"]:
             print(f"   - {e}")
+
+    for item in boundary_warnings:
+        warn(f"⚠️  {item['path']}: {item['issue']}")
+        print(f"   → {item['suggestion']}")
 
     if invalid:
         raise SystemExit(1)
@@ -960,35 +1077,56 @@ def runtime_snapshot():
 
 
 def update_runtime_snapshot(paths):
-    context = paths["shared"] / "context.md"
-    if not context.exists():
-        return []
+    """Write mutable runtime facts to shared/status, not context.md."""
+    import subprocess
+
     snap = runtime_snapshot()
-    block = (
+    gateway_state = ""
+    gateway_exec = ""
+    try:
+        gateway_state = subprocess.run(["systemctl", "--user", "is-active", "openclaw-gateway"], capture_output=True, text=True, timeout=5).stdout.strip()
+    except Exception:
+        gateway_state = "unknown"
+    try:
+        gateway_exec = subprocess.run(["systemctl", "--user", "show", "openclaw-gateway", "-p", "ExecStart", "--value"], capture_output=True, text=True, timeout=5).stdout.strip()
+    except Exception:
+        gateway_exec = "unknown"
+
+    status_dir = paths.get("status") or (paths["shared"] / "status")
+    status_file = status_dir / "openclaw-runtime.md"
+    content = (
+        "# OpenClaw Runtime Status\n\n"
+        "Classification: operational memory/status. This is the mutable runtime snapshot; `context.md` should only link here.\n\n"
         "<!-- agent-mesh-runtime-snapshot:start -->\n"
-        "## Runtime Snapshot (auto-managed)\n\n"
         f"- OpenClaw version: `{snap.get('openclawVersion') or 'unknown'}`\n"
         f"- OpenClaw executable: `{snap.get('openclawExecutable') or 'unknown'}`\n"
         f"- OpenClaw resolved path: `{snap.get('openclawResolvedPath') or 'unknown'}`\n"
-        "<!-- agent-mesh-runtime-snapshot:end -->\n"
+        f"- User gateway service state: `{gateway_state or 'unknown'}`\n"
+        f"- User gateway ExecStart: `{gateway_exec or 'unknown'}`\n"
+        "<!-- agent-mesh-runtime-snapshot:end -->\n\n"
+        "Rule: before risky OpenClaw work, verify both the CLI path and the gateway ExecStart path. Do not infer the running gateway bundle from `which openclaw` alone.\n"
     )
-    text = read_text(context)
+
+    changed = []
+    old_status = status_file.read_text(encoding="utf-8") if status_file.exists() else ""
+    if old_status != content:
+        write_text(status_file, content)
+        changed.append({"path": str(status_file), "changes": ["updated runtime snapshot"]})
+
+    # Migrate legacy inline context snapshot out of context.md if present.
+    context = paths["shared"] / "context.md"
     start = "<!-- agent-mesh-runtime-snapshot:start -->"
     end = "<!-- agent-mesh-runtime-snapshot:end -->"
-    if start in text and end in text:
-        before, rest = text.split(start, 1)
-        _, after = rest.split(end, 1)
-        new_text = before + block + after.lstrip("\n")
-    else:
-        marker = "## OpenClaw Workspace\n"
-        if marker in text:
-            new_text = text.replace(marker, marker + "\n" + block + "\n", 1)
-        else:
-            new_text = text.rstrip() + "\n\n" + block
-    if new_text != text:
-        write_text(context, new_text)
-        return ["updated runtime snapshot"]
-    return []
+    if context.exists():
+        text = read_text(context)
+        if start in text and end in text:
+            before, rest = text.split(start, 1)
+            _, after = rest.split(end, 1)
+            new_text = before.rstrip() + "\n\n" + after.lstrip("\n")
+            if new_text != text:
+                write_text(context, new_text)
+                changed.append({"path": str(context), "changes": ["removed inline runtime snapshot"]})
+    return changed
 
 
 def cmd_doctor(args):
@@ -1022,8 +1160,10 @@ def cmd_doctor(args):
     if fix_safe:
         runtime_changes = update_runtime_snapshot(paths)
         if runtime_changes:
-            report["fixed"].append({"path": str(paths["shared"] / "context.md"), "changes": runtime_changes})
+            report["fixed"].extend(runtime_changes)
         rebuild_indexes(root, paths)
+
+    report["warnings"].extend(collect_boundary_warnings(paths))
 
     invalid = collect_validation_errors(paths)
     if invalid:

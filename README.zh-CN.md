@@ -82,7 +82,9 @@ mesh task history --id pr-77540 --action validated --summary "生产环境验证
 
 ### 📚 Shared Knowledge — 持久上下文
 
-项目级别的上下文、决策和阻塞项，存在 `.mesh/shared/` 里。
+项目级别的 operational memory/status 存在 `.mesh/shared/`：薄上下文、决策和当前阻塞项。
+
+动态 runtime/routing 真相放在 `.mesh/shared/status/`；可复用操作流程放在 `.mesh/shared/sop/` 或 docs/guides；已解决/已废弃的证据放在 `.mesh/shared/historical/`。不要把这些内容塞进 `context.md`、`decisions.md` 或 `blockers.md`。Agent Mesh 可以指向宿主侧 skills，但它本身不是 skill 系统。
 
 ```bash
 mesh shared read context.md
@@ -139,8 +141,8 @@ export MESH_ROOT=/path/to/project/root
 | `mesh shared read` | 读取共享知识文件 |
 | `mesh shared append` | 追加到共享文件（仅追加） |
 | `mesh shared update` | 替换共享文件内容 |
-| `mesh validate [--json]` | 校验所有 .mesh 文件 |
-| `mesh doctor [--fix-safe]` | 检查或安全修复状态卫生 |
+| `mesh validate [--json]` | 校验 schema + advisory boundary warnings |
+| `mesh doctor [--fix-safe]` | 安全修复状态卫生 + advisory boundary warnings |
 | `mesh sync [--repo]` | 从 GitHub 同步 PR 状态 |
 | `mesh evolution log` | 记录身份/偏好/SOP 变更 |
 | `mesh evolution read` | 读取 agent 进化日志 |
@@ -257,9 +259,11 @@ Hermes 是一个独立的 Agent 框架，运行自己的 Gateway、会话管理�
 
 ## 进化日志：共享身份与互相学习
 
-除了任务协调，Agent Mesh 还支持**进化日志**——agent 之间分享自我学习成果的机制。
+除了任务协调，Agent Mesh 还支持**进化日志**——一个轻量 learning inbox / signal channel，用来分享 agent 自身规则或运行模型发生了什么变化。
 
 当 agent 修改核心文件（AGENTS.md、USER.md、SOUL.md、SOP）时，把变更记录到 `.mesh/shared/evolution/{agent}.md`。其他 agent 可以主动查阅，选择性吸收有用的发现。
+
+Evolution logs **不是 canonical memory，也不是 executable skill**。把它们当作待审信号：已验证事实再提升到 memory/status，厚 reusable context 放到 reference，具备 trigger/goal/steps/guardrails 的 repeatable procedure 才进入 skill candidate 或宿主 skills。
 
 ```bash
 # 记录一次变更

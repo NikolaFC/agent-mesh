@@ -166,6 +166,32 @@ Architecture Decision Records. New entries append to the top. Never modify exist
 ### blockers.md
 Current blockers requiring human decision. Updated as blockers are added/resolved.
 
+### Memory vs Skill boundary
+Agent Mesh shared knowledge follows the same boundary contract as the host agent system. It is a shared state layer, not a memory engine and not a skill system by itself.
+
+| Mesh surface | Classification | Owns | Do not store here |
+| --- | --- | --- | --- |
+| `.mesh/pulse/*.json` | operational memory/status | who is active, current task, recent action, stale/blocking signal | reusable procedures, long explanations, canonical user preferences |
+| `.mesh/tasks/{active,archived}/*.json` | operational memory/status | work item truth, status, verdict, evidence history | SOP bodies, prompt libraries, unrelated project facts |
+| `.mesh/shared/context.md` | operational memory/status + thin index | project facts every agent should know, active constraints, links to thick references | command dumps, full runbooks, historical narratives, dynamic runtime snapshots |
+| `.mesh/shared/status/*` | operational memory/status | mutable runtime truth, current routing state, live environment snapshots too thick/dynamic for context | long historical narratives, reusable SOP bodies |
+| `.mesh/shared/decisions.md` | operational memory/status | append-only decisions and consequences | how-to steps unless they are part of the decision record |
+| `.mesh/shared/blockers.md` | operational memory/status | current blockers, needed decisions, current evidence | troubleshooting playbooks or resolved-history dumps |
+| `.mesh/shared/sop/*` | procedure/reference | repeatable workflow instructions, checklists, runbooks, reusable prompt snippets | one-off status, current blockers, raw task history |
+| `.mesh/shared/evolution/*` | durable-learning inbox / evolution signal | identity, preference, SOP, memory, or skill-candidate deltas for selective absorption | canonical memory, executable skills, guaranteed-startup context |
+| `.mesh/shared/historical/*` | historical evidence/reference | resolved/superseded blocker notes, archived state snapshots, evidence that should no longer bloat live context | current blockers, active status, reusable SOP bodies |
+| `.mesh/*/index.jsonl` | reference/index | search acceleration and summaries | source-of-truth memory or skill content |
+
+Routing rules:
+
+1. Put facts, current truth, preferences, decisions, blockers, and what happened in operational memory/status surfaces.
+2. Put repeatable how-to material in `.mesh/shared/sop/` or external docs/guides. If it has a trigger, goal, reusable steps, guardrails, and repeatable execution value, it may graduate to a skill candidate or host `skills/*/SKILL.md`.
+3. Keep evolution logs as learning inbox/signal only. Agents may selectively absorb them into memory, docs, workflows, or skills, but must not treat an evolution entry as canonical memory or an executable skill by itself.
+4. Do not turn every repeated fact into a skill. Repetition without a reusable procedure should stay as a signal/count or pressure on an existing skill.
+5. Prefer thin mesh memory plus links to thick references. Avoid large rewrites of historical files; migrate mixed legacy content one file at a time.
+
+`mesh validate` and `mesh doctor` may emit non-fatal boundary warnings when memory/status files accumulate obvious SOP material or SOP files look mostly like one-off state. Warnings are advisory and never auto-move content.
+
 ## CLI Interface
 
 ```bash
@@ -191,8 +217,8 @@ mesh shared update <file> --content <text>  # Replace content
 mesh init              # Initialize .mesh/ in current repo
 mesh status            # Overview of all agents + active tasks
 mesh sync              # Refresh pulse data from external sources (e.g., GitHub PRs)
-mesh validate [--json] # Check all files against schemas
-mesh doctor [--fix-safe] [--json] # Safe mechanical hygiene repairs
+mesh validate [--json] # Check schemas + advisory boundary warnings
+mesh doctor [--fix-safe] [--json] # Safe mechanical hygiene repairs + advisory boundary warnings
 ```
 
 ## Integration Patterns

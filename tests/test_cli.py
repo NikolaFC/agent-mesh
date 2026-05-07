@@ -67,6 +67,8 @@ def test_init():
         check((mesh / "shared" / "context.md").exists(), "shared/context.md created")
         check((mesh / "shared" / "decisions.md").exists(), "shared/decisions.md created")
         check((mesh / "shared" / "blockers.md").exists(), "shared/blockers.md created")
+        check((mesh / "shared" / "status").is_dir(), "shared/status/ created")
+        check((mesh / "shared" / "historical").is_dir(), "shared/historical/ created")
 
 
 def test_version():
@@ -162,6 +164,45 @@ def test_validate():
         check(json.loads(out)["ok"] is True, "validate json reports ok")
 
 
+def test_boundary_warnings():
+    with case("memory/skill boundary warnings") as t:
+        shared = Path(t.tmpdir) / ".mesh" / "shared"
+        (shared / "context.md").write_text(
+            "# Shared Context\n\n"
+            "## Emergency SOP\n"
+            "```bash\n"
+            "cd repo\n"
+            "git status\n"
+            "mesh status\n"
+            "python3 scripts/fix.py\n"
+            "```\n"
+            "1. Run the command.\n"
+            "2. Restart the service.\n"
+        )
+        sop_dir = shared / "sop"
+        sop_dir.mkdir()
+        (sop_dir / "incident.md").write_text(
+            "# Incident note\n\n"
+            "Status: RESOLVED\n"
+            "Issue: CI failed once\n"
+            "Current: no active problem\n"
+            "Decision: leave as-is\n"
+            "Resolution: rerun passed\n"
+            "Evidence: PR #123 CI passed\n"
+        )
+
+        rc, out, _ = run(["validate", "--json"], cwd=t.tmpdir)
+        parsed = json.loads(out)
+        check(rc == 0 and parsed["ok"] is True, "boundary warnings are non-fatal")
+        paths = {w["path"] for w in parsed["warnings"]}
+        check(".mesh/shared/context.md" in paths, "warns when context accumulates SOP material")
+        check(".mesh/shared/sop/incident.md" in paths, "warns when SOP looks like one-off status")
+
+        rc, out, _ = run(["doctor", "--json"], cwd=t.tmpdir)
+        doctor = json.loads(out)
+        check(any(w.get("kind") == "boundary" for w in doctor["warnings"]), "doctor includes boundary warnings")
+
+
 def test_export():
     with case("export markdown report") as t:
         run(["pulse", "update", "--agent", "bot1", "--status", "idle"], cwd=t.tmpdir)
@@ -245,6 +286,10 @@ def test_doctor_safe_fix_archives_terminal():
         archived = Path(t.tmpdir) / ".mesh" / "tasks" / "archived" / "done-1.json"
         check(not active.exists(), "terminal task removed from active")
         check(archived.exists(), "terminal task moved to archive")
+        runtime_status = Path(t.tmpdir) / ".mesh" / "shared" / "status" / "openclaw-runtime.md"
+        context_file = Path(t.tmpdir) / ".mesh" / "shared" / "context.md"
+        check(runtime_status.exists(), "runtime snapshot written to shared/status")
+        check("agent-mesh-runtime-snapshot" not in context_file.read_text(), "runtime snapshot not embedded in context")
 
 
 def test_status():
@@ -344,6 +389,7 @@ if __name__ == "__main__":
         test_task_search,
         test_shared,
         test_validate,
+        test_boundary_warnings,
         test_export,
         test_export_to_file,
         test_pulse_clean,

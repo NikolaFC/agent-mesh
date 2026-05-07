@@ -81,7 +81,9 @@ mesh task history --id pr-77540 --action validated --summary "Production smoke p
 ```
 
 ### 📚 Shared Knowledge — Persistent context
-Project-wide context, decisions, and blockers in `.mesh/shared/`.
+Project-wide operational memory/status lives in `.mesh/shared/`: thin context, decisions, and current blockers.
+
+Keep dynamic runtime/routing truth in `.mesh/shared/status/`, repeatable how-to material in `.mesh/shared/sop/` or docs/guides, and resolved/superseded evidence in `.mesh/shared/historical/`. Do not bury these in `context.md`, `decisions.md`, or `blockers.md`. Agent Mesh can point to host skills, but it is not a skill system by itself.
 
 ```bash
 mesh shared read context.md
@@ -293,9 +295,11 @@ Indexes are auto-rebuilt on every write. Disable per-type via `"autoIndex": fals
 
 ## Evolution: Shared Identity & Mutual Learning
 
-Beyond task coordination, Agent Mesh supports **evolution logging** — a way for agents to share what they've learned about themselves.
+Beyond task coordination, Agent Mesh supports **evolution logging** — a lightweight learning inbox/signal channel for agents to share what changed in their own rules or operating model.
 
 When an agent modifies its core files (AGENTS.md, USER.md, SOUL.md, SOPs), it logs the change to `.mesh/shared/evolution/{agent}.md`. Other agents can read these logs and selectively absorb useful learnings.
+
+Evolution logs are **not canonical memory and not executable skills**. Treat them as signals to review; promote only validated facts to memory/status, thick reusable context to references, and repeatable procedures with trigger/goal/steps/guardrails to skill candidates or host skills.
 
 ```bash
 # Log a change you made
