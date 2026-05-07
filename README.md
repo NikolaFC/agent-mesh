@@ -116,6 +116,20 @@ If your working directory is not the project root:
 export MESH_ROOT=/path/to/project/root
 ```
 
+### Verification
+
+Optional npm scripts are provided as a thin wrapper around the Python-only toolchain:
+
+```bash
+npm run bootstrap
+npm run verify
+npm run smoke
+npm run hygiene
+npm run sync:drift
+```
+
+CI runs the same core checks: `python3 scripts/verify_suite.py`, `python3 scripts/hygiene_scan.py`, and `python3 scripts/sync_drift_check.py`.
+
 ## CLI Reference
 
 | Command | Description |

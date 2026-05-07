@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Verify suite
+        run: python3 scripts/verify_suite.py
+
+      - name: Hygiene scan
+        run: python3 scripts/hygiene_scan.py
+
+      - name: Sync drift check
+        run: python3 scripts/sync_drift_check.py

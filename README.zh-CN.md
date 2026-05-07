@@ -118,6 +118,20 @@ cp cli/mesh /usr/local/bin/mesh
 export MESH_ROOT=/path/to/project/root
 ```
 
+### 验证
+
+项目提供可选 npm scripts，作为 Python-only 工具链的薄封装：
+
+```bash
+npm run bootstrap
+npm run verify
+npm run smoke
+npm run hygiene
+npm run sync:drift
+```
+
+CI 跑同一组核心检查：`python3 scripts/verify_suite.py`、`python3 scripts/hygiene_scan.py`、`python3 scripts/sync_drift_check.py`。
+
 ## CLI 参考
 
 | 命令 | 说明 |
