@@ -177,6 +177,8 @@ mesh pulse check --strict --json
 mesh validate --json
 ```
 
+**Important**: call `mesh` directly in the cron/watchdog payload. Do not wrap it in agent-specific modules (e.g. `python -m some_agent.terminal`) that may not be installed — `mesh` has zero external dependencies and works standalone.
+
 Recommended interval: 5-15 minutes for active multi-agent work; 30-60 minutes for low-activity repos.
 
 Recommended alert policy:
@@ -277,3 +279,13 @@ Runtime path/version is stale:
 
 - add or update an auto-managed runtime snapshot block in `.mesh/shared/context.md`
 - do not trust old handoff text over a live command such as `openclaw --version`, `git rev-parse HEAD`, or service status
+
+Cron heartbeat shows `ok` but pulse is stale:
+
+- the agent scheduler may treat any output (including errors) as success
+- check the actual cron session logs, not just `last_status`
+- common cause: the cron invokes a wrapper module (e.g. `python -m hermes_tools.terminal`) that is not installed in the agent's venv
+- fix: call `mesh` CLI directly in the cron payload — it has zero external dependencies
+- example broken command: `python -m hermes_tools.terminal "... && bash scripts/pulse.sh update ..."`
+- example fixed command: `cd /path/to/project/root && MESH_ROOT=. mesh pulse update --agent <agent> --status working --summary "heartbeat"`
+- after fixing, manually run the new command once to verify, then wait for the next cron cycle
