@@ -446,12 +446,15 @@ def cmd_pulse_touch(args):
     rebuild_indexes(root, paths)
 
 
-def collect_stale_pulses(paths, stale_minutes=30):
+def collect_stale_pulses(paths, stale_minutes=30, ignore_done=False):
     now = datetime.datetime.now(datetime.timezone.utc)
     stale = []
 
     for pf in collect_pulse_files(paths):
         data = read_json(pf)
+        status = data.get("status", "unknown")
+        if ignore_done and status in ("done", "completed"):
+            continue
         ts = parse_iso(data.get("lastUpdate"))
         agent = data.get("agent", pf.stem)
         if ts is None:
@@ -481,7 +484,8 @@ def cmd_pulse_check(args):
     paths = mesh_paths(root)
 
     threshold = getattr(args, "stale_minutes", 30) or 30
-    stale = collect_stale_pulses(paths, stale_minutes=threshold)
+    ignore_done = getattr(args, "ignore_done", False)
+    stale = collect_stale_pulses(paths, stale_minutes=threshold, ignore_done=ignore_done)
 
     if getattr(args, "json", False):
         print(json.dumps({
@@ -1854,6 +1858,7 @@ def build_parser():
     p_pulse_check = pulse_sub.add_parser("check", help="Find stale pulses (>30m)")
     p_pulse_check.add_argument("--stale-minutes", type=int, default=30, help="Stale threshold in minutes (default: 30)")
     p_pulse_check.add_argument("--strict", action="store_true", help="Exit non-zero when stale agents are found")
+    p_pulse_check.add_argument("--ignore-done", action="store_true", help="Skip agents with status done/completed")
     p_pulse_check.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     p_pulse_check.set_defaults(func=cmd_pulse_check)
 

@@ -289,3 +289,9 @@ Cron heartbeat shows `ok` but pulse is stale:
 - example broken command: `python -m hermes_tools.terminal "... && bash scripts/pulse.sh update ..."`
 - example fixed command: `cd /path/to/project/root && MESH_ROOT=. mesh pulse update --agent <agent> --status working --summary "heartbeat"`
 - after fixing, manually run the new command once to verify, then wait for the next cron cycle
+
+Watchdog alerts on `done` agents:
+
+- agents with status `done` or `completed` legitimately stop updating pulse
+- use `mesh pulse check --ignore-done` to skip them in stale checks
+- the built-in watchdog script already uses `--ignore-done`; if you write your own, pass this flag too
