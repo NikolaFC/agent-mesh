@@ -141,7 +141,9 @@ Each task gets a JSON file in `.mesh/tasks/active/{task-id}.json`.
 
 **Verdict values:** `ADOPT`, `REPAIR`, `CLOSE`, `pending`
 
-**Action values:** `created`, `started`, `committed`, `repaired`, `validated`, `deployed`, `merged`, `closed`, `commented`, `blocked`, `unblocked`
+**Action values (canonical on disk):** `created`, `started`, `committed`, `repaired`, `validated`, `deployed`, `merged`, `closed`, `commented`, `blocked`, `unblocked`, `tested`, `reviewed`, `confirmed`, `updated`, `superseded`
+
+The CLI accepts common semantic aliases at write/repair boundaries and stores the canonical value. For example, `completed`, `finished`, and `success` normalize to `validated`; `commit` normalizes to `committed`. `mesh doctor --fix-safe` also normalizes legacy task history aliases, including archived tasks.
 
 ## Layer 3: Shared Knowledge
 

@@ -80,6 +80,8 @@ mesh task update --id pr-77540 --verdict ADOPT
 mesh task history --id pr-77540 --action validated --summary "Production smoke passed"
 ```
 
+Task history actions are stored with a fixed canonical vocabulary. The CLI accepts common semantic aliases and normalizes them before writing, e.g. `completed`/`finished`/`success` → `validated`, and `commit` → `committed`. `mesh doctor --fix-safe` repairs the same aliases in legacy active and archived task files.
+
 ### 📚 Shared Knowledge — Persistent context
 Project-wide operational memory/status lives in `.mesh/shared/`: thin context, decisions, and current blockers.
 

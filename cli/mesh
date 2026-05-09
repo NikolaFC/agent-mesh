@@ -24,7 +24,44 @@ TASK_ACTIONS = {
     "created", "started", "committed", "repaired", "validated", "deployed", "merged", "closed",
     "commented", "blocked", "unblocked", "tested", "reviewed", "confirmed", "updated", "superseded",
 }
+TASK_ACTION_ALIASES = {
+    # Canonical on disk is a small past-tense vocabulary. Accept common
+    # semantic variants at CLI/doctor boundaries and normalize them before
+    # writing so state stays schema-clean even when agents say "completed".
+    "complete": "validated",
+    "completed": "validated",
+    "finish": "validated",
+    "finished": "validated",
+    "success": "validated",
+    "succeeded": "validated",
+    "validate": "validated",
+    "commit": "committed",
+    "repair": "repaired",
+    "deploy": "deployed",
+    "merge": "merged",
+    "close": "closed",
+    "comment": "commented",
+    "block": "blocked",
+    "unblock": "unblocked",
+    "test": "tested",
+    "review": "reviewed",
+    "confirm": "confirmed",
+    "update": "updated",
+    "supersede": "superseded",
+}
 TERMINAL_TASK_STATUS = {"closed", "archived", "done", "merged", "deployed"}
+
+
+def normalize_task_action(value):
+    if not isinstance(value, str):
+        return value
+    normalized = value.strip().lower().replace("_", "-")
+    return TASK_ACTION_ALIASES.get(normalized, normalized)
+
+
+def task_action_help():
+    aliases = ", ".join(f"{k}->{v}" for k, v in sorted(TASK_ACTION_ALIASES.items()))
+    return f"Allowed: {sorted(TASK_ACTIONS)}. Accepted aliases: {aliases}"
 
 
 def now_iso():
@@ -595,8 +632,9 @@ def cmd_task_update(args):
 
 
 def cmd_task_history(args):
-    if args.action not in TASK_ACTIONS:
-        die(f"Invalid action '{args.action}'. Allowed: {sorted(TASK_ACTIONS)}")
+    action = normalize_task_action(args.action)
+    if action not in TASK_ACTIONS:
+        die(f"Invalid action '{args.action}'. {task_action_help()}")
 
     root = require_mesh_root()
     paths = mesh_paths(root)
@@ -605,7 +643,7 @@ def cmd_task_history(args):
     agent = args.agent or task.get("assignedTo") or "unknown"
     entry = {
         "agent": agent,
-        "action": args.action,
+        "action": action,
         "summary": args.summary,
         "at": now_iso(),
     }
@@ -1054,7 +1092,12 @@ def normalize_legacy_task(task, task_id):
             if not entry.get("at"):
                 entry["at"] = task.get("updatedAt") or now
                 changed.append("fill history at")
-            if entry.get("action") not in TASK_ACTIONS:
+            normalized_action = normalize_task_action(entry.get("action"))
+            if normalized_action in TASK_ACTIONS and entry.get("action") != normalized_action:
+                old = entry.get("action")
+                entry["action"] = normalized_action
+                changed.append(f"history action {old}->{normalized_action}")
+            elif entry.get("action") not in TASK_ACTIONS:
                 old = entry.get("action")
                 entry["action"] = "commented"
                 changed.append(f"history action {old}->commented")
@@ -1139,10 +1182,11 @@ def cmd_doctor(args):
     fix_safe = getattr(args, "fix_safe", False)
     report = {"ok": True, "fixed": [], "warnings": []}
 
-    for task_file in list(collect_task_files(paths, include_archived=False)):
+    for task_file in list(collect_task_files(paths, include_archived=True)):
         task = read_json(task_file)
         changes = normalize_legacy_task(task, task.get("id") or task_file.stem)
-        terminal = task.get("status") in TERMINAL_TASK_STATUS
+        is_active_task = task_file.parent == paths["active"]
+        terminal = is_active_task and task.get("status") in TERMINAL_TASK_STATUS
 
         if changes and fix_safe:
             write_json(task_file, task)

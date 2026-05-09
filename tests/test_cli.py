@@ -114,6 +114,20 @@ def test_task_lifecycle():
         check("test-1" not in out, "archived task not in active list")
 
 
+def test_task_history_action_aliases_are_canonicalized():
+    with case("task history action aliases are canonicalized") as t:
+        run(["task", "create", "--id", "alias-1", "--title", "Alias task", "--type", "feature", "--assign", "alice"], cwd=t.tmpdir)
+        rc, _, _ = run(["task", "history", "--id", "alias-1", "--action", "completed", "--summary", "done", "--agent", "alice"], cwd=t.tmpdir)
+        check(rc == 0, "completed alias accepted")
+
+        task_file = Path(t.tmpdir) / ".mesh" / "tasks" / "active" / "alias-1.json"
+        data = json.loads(task_file.read_text())
+        check(data["history"][-1]["action"] == "validated", "completed stored as validated")
+
+        rc, out, _ = run(["validate", "--json"], cwd=t.tmpdir)
+        check(rc == 0 and json.loads(out)["ok"] is True, "canonicalized task validates")
+
+
 def test_task_assign():
     with case("task assign") as t:
         run(["task", "create", "--id", "reassign-1", "--title", "Reassign me", "--type", "feature", "--assign", "alice"], cwd=t.tmpdir)
@@ -292,6 +306,41 @@ def test_doctor_safe_fix_archives_terminal():
         check("agent-mesh-runtime-snapshot" not in context_file.read_text(), "runtime snapshot not embedded in context")
 
 
+def test_doctor_safe_fix_normalizes_archived_action_aliases():
+    with case("doctor --fix-safe normalizes archived action aliases") as t:
+        archived = Path(t.tmpdir) / ".mesh" / "tasks" / "archived" / "legacy-done.json"
+        archived.write_text(json.dumps({
+            "schema": "agent-mesh/task/v1",
+            "id": "legacy-done",
+            "type": "ops",
+            "title": "Legacy done",
+            "status": "done",
+            "verdict": "pending",
+            "priority": "medium",
+            "assignedTo": "alice",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+            "progress": 1.0,
+            "history": [{
+                "agent": "alice",
+                "action": "completed",
+                "summary": "legacy wording",
+                "at": "2026-01-01T00:00:00Z",
+            }],
+        }))
+
+        rc, _, _ = run(["validate", "--json"], cwd=t.tmpdir, expect_rc=1)
+        check(rc == 1, "validate catches non-canonical archived alias before doctor")
+
+        rc, out, _ = run(["doctor", "--fix-safe", "--json"], cwd=t.tmpdir)
+        check(rc == 0 and json.loads(out)["ok"] is True, "doctor fixes archived alias")
+        data = json.loads(archived.read_text())
+        check(data["history"][0]["action"] == "validated", "archived completed alias stored as validated")
+
+        rc, out, _ = run(["validate", "--json"], cwd=t.tmpdir)
+        check(rc == 0 and json.loads(out)["ok"] is True, "validate passes after archived alias fix")
+
+
 def test_status():
     with case("status overview") as t:
         run(["pulse", "update", "--agent", "alpha", "--status", "working"], cwd=t.tmpdir)
@@ -385,6 +434,7 @@ if __name__ == "__main__":
         test_version,
         test_pulse,
         test_task_lifecycle,
+        test_task_history_action_aliases_are_canonicalized,
         test_task_assign,
         test_task_search,
         test_shared,
@@ -396,6 +446,7 @@ if __name__ == "__main__":
         test_pulse_clean_skips_working,
         test_pulse_touch_and_strict_check,
         test_doctor_safe_fix_archives_terminal,
+        test_doctor_safe_fix_normalizes_archived_action_aliases,
         test_status,
         test_mesh_root_env,
         test_evolution_log,

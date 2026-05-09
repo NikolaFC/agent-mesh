@@ -85,7 +85,8 @@
           },
           "action": {
             "type": "string",
-            "enum": ["created", "started", "committed", "repaired", "validated", "deployed", "merged", "closed", "commented", "blocked", "unblocked", "tested", "reviewed", "confirmed", "updated", "superseded"]
+            "enum": ["created", "started", "committed", "repaired", "validated", "deployed", "merged", "closed", "commented", "blocked", "unblocked", "tested", "reviewed", "confirmed", "updated", "superseded"],
+            "description": "Canonical task history action. CLI/doctor may accept semantic aliases such as completed/finished/success and normalize them to canonical values before writing."
           },
           "summary": {
             "type": "string",
