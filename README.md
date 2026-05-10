@@ -161,7 +161,7 @@ mesh qmd remote-search "Agent Mesh migration capsule" \
   --json -n 5
 ```
 
-This is a read-only SSH/Tailscale wrapper around the host-side `scripts/qmd_search_fallback.py`. You can also set `QMD_REMOTE_HOST`, `QMD_REMOTE_USER`, `QMD_REMOTE_WORKSPACE`, and optional `QMD_REMOTE_CACHE` in the client environment.
+This is a read-only SSH/Tailscale wrapper around the host-side `scripts/qmd_search_fallback.py`. Non-interactive SSH shells often miss user tool directories, so `remote-search` prepends `$HOME/.bun/bin:$HOME/.local/bin:/opt/homebrew/bin` by default; override with `--remote-path` or `QMD_REMOTE_PATH` when needed. You can also set `QMD_REMOTE_HOST`, `QMD_REMOTE_USER`, `QMD_REMOTE_WORKSPACE`, and optional `QMD_REMOTE_CACHE` in the client environment.
 
 ## What Gets Shared
 

@@ -159,7 +159,7 @@ mesh qmd remote-search "Agent Mesh migration capsule" \
   --json -n 5
 ```
 
-这只是通过 SSH/Tailscale 只读调用 host 侧 `scripts/qmd_search_fallback.py`。client 也可以用环境变量 `QMD_REMOTE_HOST`、`QMD_REMOTE_USER`、`QMD_REMOTE_WORKSPACE`，以及可选的 `QMD_REMOTE_CACHE`。
+这只是通过 SSH/Tailscale 只读调用 host 侧 `scripts/qmd_search_fallback.py`。非交互 SSH shell 经常缺少用户工具目录，所以 `remote-search` 默认会给远端 PATH 补 `$HOME/.bun/bin:$HOME/.local/bin:/opt/homebrew/bin`；需要时可用 `--remote-path` 或 `QMD_REMOTE_PATH` 覆盖。client 也可以用环境变量 `QMD_REMOTE_HOST`、`QMD_REMOTE_USER`、`QMD_REMOTE_WORKSPACE`，以及可选的 `QMD_REMOTE_CACHE`。
 
 ## 共享什么
 

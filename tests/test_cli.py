@@ -551,7 +551,18 @@ def test_qmd_remote_search_print_command():
         check(data["target"] == "nikolafc@wsl.tailnet.ts.net", "qmd remote target correct")
         check("qmd_search_fallback.py" in data["remoteCommand"], "qmd remote command uses helper")
         check("memory-root" in data["remoteCommand"], "qmd remote command includes collection")
+        check("export PATH=$HOME/.bun/bin" in data["remoteCommand"], "qmd remote command prepends common user tool paths")
         check(data["sshCommand"][0] == "ssh", "qmd remote command uses ssh")
+
+        rc, out, _ = run([
+            "qmd", "remote-search", "test",
+            "--host", "wsl.tailnet.ts.net",
+            "--workspace", "/repo",
+            "--remote-path", "/custom/bin:/another/bin",
+            "--print-command",
+        ], cwd=t.tmpdir)
+        custom = json.loads(out)
+        check(rc == 0 and "export PATH=/custom/bin:/another/bin:$PATH" in custom["remoteCommand"], "qmd remote command accepts custom remote PATH")
 
         rc, _, _ = run(["qmd", "remote-search", "test", "--print-command"], cwd=t.tmpdir, expect_rc=1)
         check(rc == 1, "qmd remote-search requires host/workspace")

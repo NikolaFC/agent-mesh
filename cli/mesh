@@ -2483,6 +2483,18 @@ def qmd_remote_target(host, user=None):
     return f"{user}@{host}" if user else host
 
 
+def qmd_remote_path_prepend(value):
+    # Non-interactive SSH shells often miss user tool dirs such as ~/.bun/bin.
+    # Allow a conservative shell-expanded PATH prefix (no whitespace/control
+    # operators) so clients can expose host-side qmd without modifying login
+    # files or installing global symlinks.
+    default = "$HOME/.bun/bin:$HOME/.local/bin:/opt/homebrew/bin"
+    value = value or os.environ.get("QMD_REMOTE_PATH") or default
+    if not re.match(r"^[A-Za-z0-9_.$/~:+-]+$", value):
+        die("Invalid remote PATH prefix. Use colon-separated safe paths without spaces or shell operators.")
+    return value
+
+
 def build_qmd_remote_command(args):
     host = args.host or os.environ.get("QMD_REMOTE_HOST")
     user = args.user or os.environ.get("QMD_REMOTE_USER")
@@ -2493,6 +2505,7 @@ def build_qmd_remote_command(args):
         die("Remote QMD workspace is required. Pass --workspace or set QMD_REMOTE_WORKSPACE.")
     target = qmd_remote_target(host, user=user)
     script = args.script or os.environ.get("QMD_REMOTE_SCRIPT") or "scripts/qmd_search_fallback.py"
+    remote_path = qmd_remote_path_prepend(args.remote_path)
     remote_args = [args.query, "-n", str(args.num), "--timeout", str(args.timeout)]
     for collection in args.collection or []:
         remote_args += ["-c", collection]
@@ -2507,7 +2520,7 @@ def build_qmd_remote_command(args):
     if args.min_vsearch_score is not None:
         remote_args += ["--min-vsearch-score", str(args.min_vsearch_score)]
     qmd_cmd = " ".join(shlex.quote(x) for x in ["python3", script] + remote_args)
-    remote_cmd = f"set -euo pipefail; cd {shlex.quote(workspace)}; {qmd_cmd}"
+    remote_cmd = f"set -euo pipefail; export PATH={remote_path}:$PATH; cd {shlex.quote(workspace)}; {qmd_cmd}"
     ssh_cmd = [
         "ssh",
         "-o", "BatchMode=yes",
@@ -2838,6 +2851,7 @@ def build_parser():
     p_qmd_remote.add_argument("--workspace", help="Remote workspace containing scripts/qmd_search_fallback.py (or QMD_REMOTE_WORKSPACE)")
     p_qmd_remote.add_argument("--script", help="Remote helper script path relative to workspace (default: scripts/qmd_search_fallback.py)")
     p_qmd_remote.add_argument("--cache", help="Remote QMD XDG cache path (or QMD_REMOTE_CACHE)")
+    p_qmd_remote.add_argument("--remote-path", help="Safe colon-separated PATH prefix for the remote non-interactive SSH shell (or QMD_REMOTE_PATH). Default includes $HOME/.bun/bin")
     p_qmd_remote.add_argument("-n", "--num", type=int, default=5, help="Number of results (default: 5)")
     p_qmd_remote.add_argument("-c", "--collection", action="append", default=[], help="Collection filter; can repeat")
     p_qmd_remote.add_argument("--json", action="store_true", help="Request JSON output from remote helper")

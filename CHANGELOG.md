@@ -23,7 +23,7 @@ This project follows SemVer. See `VERSION` for the current package version.
   - `mesh state tailscale configure`
   - `mesh state tailscale clone`
 - Added `mesh migrate plan/export/inspect/apply` for host-approved OpenClaw persona/rule/memory/skill migration capsules, including `--include-memory` for stable `memory/` files.
-- Added `mesh qmd remote-search` for read-only SSH/Tailscale querying of a canonical host's QMD index.
+- Added `mesh qmd remote-search` for read-only SSH/Tailscale querying of a canonical host's QMD index, including remote PATH prefix support for non-interactive shells that miss Bun-installed `qmd`.
 - Added tests that simulate WSL ↔ Mac style sharing through a local bare Git remote, verify Tailscale host/client generation/configuration, exercise migration capsule dry-run/write behavior, and validate remote QMD command construction.
 
 ### Changed

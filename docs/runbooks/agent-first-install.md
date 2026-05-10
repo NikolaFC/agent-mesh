@@ -111,6 +111,8 @@ export QMD_REMOTE_WORKSPACE=/home/nikolafc/.openclaw/workspace
 mesh qmd remote-search "Agent Mesh migration" --json -n 5
 ```
 
+If the host installed `qmd` somewhere unusual, set `QMD_REMOTE_PATH` or pass `--remote-path`; by default the command already prepends `$HOME/.bun/bin:$HOME/.local/bin:/opt/homebrew/bin` for non-interactive SSH shells.
+
 This is read-only SSH/Tailscale execution of the host-side `scripts/qmd_search_fallback.py`; it does not approve devices or expose a search server.
 
 Acceptance:
