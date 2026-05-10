@@ -4,6 +4,31 @@ All notable changes to Agent Mesh are documented here.
 
 This project follows SemVer. See `VERSION` for the current package version.
 
+## [0.3.0] - 2026-05-10
+
+### Added
+
+- Added `mesh root [--json]` to show the detected mesh root, `.mesh` path, root source, and symlink resolution.
+- Added cross-terminal/cross-device Git state backend commands:
+  - `mesh state configure`
+  - `mesh state clone`
+  - `mesh state status`
+  - `mesh state pull`
+  - `mesh state push`
+  - `mesh state sync`
+- Added tests that simulate WSL ↔ Mac style sharing through a local bare Git remote.
+
+### Changed
+
+- Mutating CLI commands now use a local `.mesh/.lock` on POSIX platforms.
+- JSON and Markdown writes now use same-directory temporary files followed by atomic replacement.
+- Documentation now recommends a dedicated private mesh-state repo for cross-device sharing and keeps `mesh sync` reserved for GitHub PR sync.
+
+### Safety
+
+- `mesh state configure` refuses to use a non-dedicated project directory by default; pass `--allow-project-repo` only when intentional.
+- Generated indexes and local lock/cache files are ignored by the Git state backend to reduce avoidable sync conflicts.
+
 ## [0.2.0] - 2026-05-06
 
 ### Added

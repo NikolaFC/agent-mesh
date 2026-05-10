@@ -75,7 +75,16 @@ def test_version():
     with case("version flag") as t:
         rc, out, _ = run(["--version"], cwd=t.tmpdir)
         check(rc == 0, "version succeeds")
-        check("Agent Mesh 0.2.0" in out, "version output correct")
+        check("Agent Mesh 0.3.0" in out, "version output correct")
+
+
+def test_root_command():
+    with case("root command") as t:
+        rc, out, _ = run(["root", "--json"], cwd=t.tmpdir)
+        check(rc == 0, "root json succeeds")
+        data = json.loads(out)
+        check(data["root"] == str(Path(t.tmpdir).resolve()), "root path correct")
+        check(data["mesh"].endswith(".mesh"), "mesh path shown")
 
 
 def test_pulse():
@@ -365,6 +374,52 @@ def test_mesh_root_env():
             shutil.rmtree(other, ignore_errors=True)
 
 
+def test_state_sync_between_two_roots():
+    with case("state sync via git remote between two roots") as t:
+        remote_parent = tempfile.mkdtemp()
+        root_b = tempfile.mkdtemp()
+        try:
+            remote = Path(remote_parent) / "mesh-state.git"
+            subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True, text=True)
+
+            rc, _, _ = run(["state", "configure", "--remote", str(remote)], cwd=t.tmpdir)
+            check(rc == 0, "state configure succeeds")
+            run(["pulse", "update", "--agent", "wsl-agent", "--status", "working", "--summary", "from WSL"], cwd=t.tmpdir)
+            rc, _, _ = run(["state", "push", "--message", "initial mesh state"], cwd=t.tmpdir)
+            check(rc == 0, "state push succeeds")
+
+            shutil.rmtree(root_b)
+            rc, out, _ = run(["state", "clone", "--remote", str(remote), "--target", root_b])
+            check(rc == 0, "state clone succeeds")
+            rc, out, _ = run(["pulse", "read", "--agent", "wsl-agent"], cwd=root_b)
+            check(rc == 0 and "from WSL" in out, "second root sees first root pulse")
+
+            run(["pulse", "update", "--agent", "mac-agent", "--status", "working", "--summary", "from Mac"], cwd=root_b)
+            rc, _, _ = run(["state", "sync", "--message", "mac pulse"], cwd=root_b)
+            check(rc == 0, "state sync from second root succeeds")
+            rc, _, _ = run(["state", "pull"], cwd=t.tmpdir)
+            check(rc == 0, "state pull into first root succeeds")
+            rc, out, _ = run(["pulse", "read", "--agent", "mac-agent"], cwd=t.tmpdir)
+            check(rc == 0 and "from Mac" in out, "first root sees second root pulse")
+        finally:
+            shutil.rmtree(remote_parent, ignore_errors=True)
+            shutil.rmtree(root_b, ignore_errors=True)
+
+
+def test_state_configure_refuses_project_content_by_default():
+    with case("state configure refuses non-dedicated project roots") as t:
+        Path(t.tmpdir, "src").mkdir()
+        Path(t.tmpdir, "src", "app.py").write_text("print('hello')\n")
+        remote_parent = tempfile.mkdtemp()
+        try:
+            remote = Path(remote_parent) / "mesh-state.git"
+            subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True, text=True)
+            rc, _, _ = run(["state", "configure", "--remote", str(remote)], cwd=t.tmpdir, expect_rc=1)
+            check(rc == 1, "state configure refuses project root")
+        finally:
+            shutil.rmtree(remote_parent, ignore_errors=True)
+
+
 def test_evolution_log():
     with case("evolution log + read") as t:
         rc, _, _ = run(["evolution", "log", "--agent", "hermes", "--file", "AGENTS.md", "--category", "sop", "--summary", "Added mesh workflow"], cwd=t.tmpdir)
@@ -432,6 +487,7 @@ if __name__ == "__main__":
     tests = [
         test_init,
         test_version,
+        test_root_command,
         test_pulse,
         test_task_lifecycle,
         test_task_history_action_aliases_are_canonicalized,
@@ -449,6 +505,8 @@ if __name__ == "__main__":
         test_doctor_safe_fix_normalizes_archived_action_aliases,
         test_status,
         test_mesh_root_env,
+        test_state_sync_between_two_roots,
+        test_state_configure_refuses_project_content_by_default,
         test_evolution_log,
         test_evolution_multiple_entries,
         test_evolution_sync,

@@ -30,6 +30,7 @@ From the project that should contain shared state:
 
 ```bash
 mesh init
+mesh root
 mesh status
 mesh validate
 ```
@@ -40,9 +41,26 @@ If the agent's working directory may not be the project root, set:
 export MESH_ROOT=/path/to/project/root
 ```
 
+For WSL ↔ Mac / cross-device sharing, prefer a dedicated private state root instead of a normal code repo:
+
+```bash
+# First machine
+mkdir -p ~/agent-mesh-state
+cd ~/agent-mesh-state
+mesh init
+mesh state configure --remote git@github.com:<you>/<private-mesh-state>.git
+mesh state push --message "initial mesh state"
+
+# Second machine
+mesh state clone --remote git@github.com:<you>/<private-mesh-state>.git --target ~/agent-mesh-state
+export MESH_ROOT=~/agent-mesh-state
+mesh state sync
+```
+
 Acceptance:
 
 ```bash
+mesh root --json
 mesh status
 mesh pulse check --strict --json
 mesh validate --json
@@ -82,9 +100,11 @@ Environment:
 - If not already in the project root, set MESH_ROOT=<project-root>.
 
 Before starting work:
-1. Run `mesh status`.
-2. Run `mesh task list` and look for related active tasks.
-3. Read `.mesh/shared/context.md`; if decisions/blockers matter, read those too.
+1. Run `mesh root` to confirm which shared root this runtime is using.
+2. If this root uses cross-device Git sync, run `mesh state sync`.
+3. Run `mesh status`.
+4. Run `mesh task list` and look for related active tasks.
+5. Read `.mesh/shared/context.md`; if decisions/blockers matter, read those too.
 
 During work:
 - Keep your pulse fresh when starting work, reaching a milestone, becoming blocked, or finishing.
@@ -103,7 +123,8 @@ When blocked:
 Before final response / handoff:
 1. Run `mesh validate` if you wrote Mesh state.
 2. Make sure your pulse is not stale.
-3. If task state changed, make the final task status/history match the actual outcome.
+3. If this root uses cross-device Git sync, run `mesh state sync --message "<agent> mesh update"`.
+4. If task state changed, make the final task status/history match the actual outcome.
 ```
 
 ## 4. Lifecycle command patterns
@@ -111,6 +132,8 @@ Before final response / handoff:
 Start work:
 
 ```bash
+mesh root
+mesh state sync   # only when this root has a Git state remote configured
 mesh status
 mesh task list
 mesh pulse update --agent <agent> --status working --task <task-id> --summary "started <scope>"
@@ -149,6 +172,7 @@ Done:
 mesh task history --id <task-id> --agent <agent> --action validated --summary "validation passed"
 mesh task update --id <task-id> --status closed --progress 1
 mesh pulse update --agent <agent> --status done --task <task-id> --summary "done"
+mesh state sync --message "<agent> completed <task-id>"  # when using a Git state remote
 ```
 
 ## 5. Add a heartbeat / watchdog

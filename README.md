@@ -2,7 +2,7 @@
 
 **A lightweight protocol for multi-agent collaboration.**
 
-Current version: **0.2.0**. See [`CHANGELOG.md`](CHANGELOG.md).
+Current version: **0.3.0**. See [`CHANGELOG.md`](CHANGELOG.md).
 
 > When you use OpenClaw + Codex + Claude Code on the same project, each agent is an island. Agent Mesh is the bridge.
 
@@ -59,6 +59,48 @@ mesh init
 ```
 
 **Important:** Agent Mesh core only provides the shared state layer. Each agent must still wire Mesh into its own startup prompt, heartbeat/watchdog, task lifecycle, and alert delivery. See the required first-install runbook: [`docs/runbooks/agent-first-install.md`](docs/runbooks/agent-first-install.md).
+
+## Cross-terminal / cross-device Mesh
+
+Agent Mesh can be shared across WSL, macOS terminals, OpenClaw, Hermes, Claude Code, Codex, and other file-capable agents.
+
+For multiple terminals on the same machine or mounted workspace, point every runtime at the same root:
+
+```bash
+export MESH_ROOT=/path/to/shared/mesh-root
+mesh root
+mesh status
+```
+
+For WSL ↔ Mac or other cross-device setups, use a **private Git state repo** as an explicit backend. This keeps the file API as the source of truth while avoiding a server/daemon:
+
+```bash
+# First machine, e.g. WSL
+mkdir -p ~/agent-mesh-state
+cd ~/agent-mesh-state
+mesh init
+mesh state configure --remote git@github.com:<you>/<private-mesh-state>.git
+mesh state push --message "initial mesh state"
+
+# Second machine, e.g. Mac
+mesh state clone --remote git@github.com:<you>/<private-mesh-state>.git --target ~/agent-mesh-state
+export MESH_ROOT=~/agent-mesh-state
+mesh state sync
+```
+
+Recommended agent loop:
+
+```bash
+mesh state sync                       # before work: pull/rebase remote state
+mesh pulse update --agent mac-agent --status working --summary "started"
+# ...work...
+mesh state sync --message "mac-agent pulse/task update"  # after milestones
+```
+
+Safety notes:
+- Use a dedicated private state repo; do not point `mesh state configure` at a normal project repo unless you pass `--allow-project-repo` deliberately.
+- State sync is explicit, not hidden auto-sync. If Git reports a rebase conflict, resolve it like any normal Git conflict.
+- Mesh mutations use a local `.mesh/.lock` and atomic file replacement on POSIX platforms so multi-terminal writes on the same machine are safer.
 
 ## What Gets Shared
 
@@ -139,6 +181,7 @@ CI runs the same core checks: `python3 scripts/verify_suite.py`, `python3 script
 | `mesh --version` | Print Agent Mesh version |
 | `mesh init` | Initialize `.mesh/` directory with schemas |
 | `mesh status` | Overview of all agents + active tasks |
+| `mesh root [--json]` | Show detected mesh root, source, and symlink resolution |
 | `mesh export [-o file]` | Export status as markdown report |
 | `mesh pulse read [--all]` | Read agent pulse(s) |
 | `mesh pulse update` | Update your agent's pulse |
@@ -158,6 +201,11 @@ CI runs the same core checks: `python3 scripts/verify_suite.py`, `python3 script
 | `mesh validate [--json]` | Validate all .mesh files against schemas |
 | `mesh doctor [--fix-safe]` | Inspect or safely repair state hygiene |
 | `mesh sync [--repo]` | Sync PR status from GitHub |
+| `mesh state configure` | Configure a private Git backend for cross-device mesh state |
+| `mesh state clone` | Clone a shared mesh state root and print `MESH_ROOT` setup |
+| `mesh state pull` | Pull/rebase remote mesh state |
+| `mesh state push` | Commit and push local mesh state |
+| `mesh state sync` | Commit local state, pull/rebase, rebuild indexes, and push |
 | `mesh evolution log` | Log an identity/preference/SOP change |
 | `mesh evolution read` | Read agent evolution logs |
 | `mesh evolution sync` | Check other agents' recent changes |

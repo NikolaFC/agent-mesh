@@ -2,7 +2,7 @@
 
 **轻量级多 Agent 协作协议。**
 
-当前版本：**0.2.0**。详见 [`CHANGELOG.md`](CHANGELOG.md)。
+当前版本：**0.3.0**。详见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 > 当你在同一个项目里用 OpenClaw + Codex + Claude Code，每个 Agent 都是孤岛。Agent Mesh 是桥梁。
 
@@ -57,6 +57,48 @@ mesh init
 ```
 
 **重要：** Agent Mesh core 只提供共享状态层；每个 Agent 仍然需要把 Mesh 接入自己的启动 prompt、heartbeat/watchdog、任务生命周期和告警投递。首次接入必读：[`docs/runbooks/agent-first-install.md`](docs/runbooks/agent-first-install.md)。
+
+## 跨终端 / 跨设备 Mesh
+
+Agent Mesh 可以在 WSL、macOS 终端、OpenClaw、Hermes、Claude Code、Codex 等任何能读写文件的 Agent 之间共享。
+
+同一台机器或同一个挂载工作区里的多个终端，直接让所有 runtime 指向同一个 root：
+
+```bash
+export MESH_ROOT=/path/to/shared/mesh-root
+mesh root
+mesh status
+```
+
+WSL ↔ Mac 或其他跨设备场景，用一个**私有 Git 状态仓库**做显式后端。这样仍然保持 file API 是真值源，不需要常驻 server/daemon：
+
+```bash
+# 第一台机器，例如 WSL
+mkdir -p ~/agent-mesh-state
+cd ~/agent-mesh-state
+mesh init
+mesh state configure --remote git@github.com:<you>/<private-mesh-state>.git
+mesh state push --message "initial mesh state"
+
+# 第二台机器，例如 Mac
+mesh state clone --remote git@github.com:<you>/<private-mesh-state>.git --target ~/agent-mesh-state
+export MESH_ROOT=~/agent-mesh-state
+mesh state sync
+```
+
+推荐 Agent 工作循环：
+
+```bash
+mesh state sync                       # 开工前：拉取/rebase 远端状态
+mesh pulse update --agent mac-agent --status working --summary "started"
+# ...work...
+mesh state sync --message "mac-agent pulse/task update"  # 里程碑后同步
+```
+
+安全说明：
+- 使用专用私有状态仓库；不要把普通代码仓库直接当 state backend，除非你明确传 `--allow-project-repo`。
+- 状态同步是显式命令，不是隐藏自动同步；如果 Git 报 rebase conflict，就按普通 Git 冲突处理。
+- Mesh 写操作在 POSIX 平台使用 `.mesh/.lock` 和原子替换文件，多终端同时写更安全。
 
 ## 共享什么
 
@@ -139,6 +181,7 @@ CI 跑同一组核心检查：`python3 scripts/verify_suite.py`、`python3 scrip
 | `mesh --version` | 输出 Agent Mesh 版本号 |
 | `mesh init` | 初始化 `.mesh/` 目录 |
 | `mesh status` | 查看所有 Agent + 活跃 task 概览 |
+| `mesh root [--json]` | 查看当前检测到的 mesh root、来源和 symlink 解析 |
 | `mesh export [-o file]` | 导出 markdown 状态报告 |
 | `mesh pulse read [--all]` | 读取 Agent pulse |
 | `mesh pulse update` | 更新你的 Agent pulse |
@@ -158,6 +201,11 @@ CI 跑同一组核心检查：`python3 scripts/verify_suite.py`、`python3 scrip
 | `mesh validate [--json]` | 校验 schema + advisory boundary warnings |
 | `mesh doctor [--fix-safe]` | 安全修复状态卫生 + advisory boundary warnings |
 | `mesh sync [--repo]` | 从 GitHub 同步 PR 状态 |
+| `mesh state configure` | 配置跨设备 mesh state 的私有 Git 后端 |
+| `mesh state clone` | 克隆共享 mesh state root，并输出 `MESH_ROOT` 设置方式 |
+| `mesh state pull` | 拉取/rebase 远端 mesh state |
+| `mesh state push` | 提交并推送本地 mesh state |
+| `mesh state sync` | 提交本地状态、拉取/rebase、重建索引并推送 |
 | `mesh evolution log` | 记录身份/偏好/SOP 变更 |
 | `mesh evolution read` | 读取 agent 进化日志 |
 | `mesh evolution sync` | 查看其他 agent 的最近变更 |

@@ -18,6 +18,8 @@ Agent Mesh replaces that with a **shared folder + structured files** that any ag
 3. **Git-Native** — Version history, diff, merge, and collaboration come free.
 4. **Convention over Configuration** — Fixed paths, simple schemas, predictable behavior.
 5. **Append-Friendly** — History is preserved, not overwritten.
+6. **Shared-Root Ready** — Multiple local terminals may write the same `.mesh/` root safely through CLI-level locking and atomic file replacement.
+7. **Explicit Remote Sync** — Cross-device state sharing uses explicit `mesh state ...` Git commands, not hidden background network writes.
 
 ## Directory Structure
 
@@ -194,9 +196,26 @@ Routing rules:
 
 `mesh validate` and `mesh doctor` may emit non-fatal boundary warnings when memory/status files accumulate obvious SOP material or SOP files look mostly like one-off state. Warnings are advisory and never auto-move content.
 
+## Write Guarantees
+
+The CLI serializes mutating operations with a local `.mesh/.lock` on POSIX platforms and writes files through same-directory temporary files followed by atomic replacement. This prevents partial JSON/Markdown writes and reduces lost-update risk when multiple terminals share one local mesh root.
+
+For cross-device sharing, Agent Mesh intentionally does not run a server and does not auto-sync in the background. Use a dedicated private Git state repo and the `mesh state` commands:
+
+```bash
+mesh state configure --remote <git-url> [--branch main]
+mesh state clone --remote <git-url> --target ~/agent-mesh-state
+mesh state sync   # commit local state, pull/rebase remote state, rebuild indexes, push
+```
+
+Recommended pattern: run `mesh state sync` before work and after meaningful pulse/task milestones. If Git reports a rebase conflict, resolve it explicitly; the CLI will not guess business truth.
+
 ## CLI Interface
 
 ```bash
+# Root visibility
+mesh root [--json]
+
 # Pulse operations
 mesh pulse update --agent <name> --status <status> [--task <id>] [--summary <text>]
 mesh pulse touch --agent <name> [--summary <text>]  # Freshness only; keep task/status
@@ -214,6 +233,14 @@ mesh task archive --id <id>
 mesh shared read <file>
 mesh shared append <file> --content <text>
 mesh shared update <file> --content <text>  # Replace content
+
+# Cross-terminal / cross-device state sync
+mesh state configure --remote <git-url> [--branch main]
+mesh state clone --remote <git-url> --target <dir> [--branch main]
+mesh state status [--json]
+mesh state pull [--autocommit]
+mesh state push [--message <text>]
+mesh state sync [--message <text>]
 
 # Utilities
 mesh init              # Initialize .mesh/ in current repo
