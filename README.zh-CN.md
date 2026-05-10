@@ -147,6 +147,20 @@ mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspa
 
 `openclaw-persona` preset 会包含 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`USER.md`、`MEMORY.md` 等核心启动/人格文件；可通过 `--include-memory` 包含稳定 `memory/` 内容；也可通过 `--include-skills` 包含 `skills/` + `agents/` 内容。默认排除 secrets、credentials、device pairing state、`.env`、logs、runtime state、raw session/dream archives 和常见 key/cert 文件。`apply` 默认只 dry-run，只有传 `--write` 才写入，并会把被覆盖文件备份到 `.mesh/migrate/backups/`。
 
+## 远程 QMD 检索
+
+client 设备可以直接查询 canonical host 的本地 QMD index，不复制向量库，也不开放公网服务：
+
+```bash
+mesh qmd remote-search "Agent Mesh migration capsule" \
+  --host desktop-564viur-1.tail715c1b.ts.net \
+  --user nikolafc \
+  --workspace /home/nikolafc/.openclaw/workspace \
+  --json -n 5
+```
+
+这只是通过 SSH/Tailscale 只读调用 host 侧 `scripts/qmd_search_fallback.py`。client 也可以用环境变量 `QMD_REMOTE_HOST`、`QMD_REMOTE_USER`、`QMD_REMOTE_WORKSPACE`，以及可选的 `QMD_REMOTE_CACHE`。
+
 ## 共享什么
 
 ### 📡 Pulse — 实时心跳
@@ -255,6 +269,7 @@ CI 跑同一组核心检查：`python3 scripts/verify_suite.py`、`python3 scrip
 | `mesh state push` | 提交并推送本地 mesh state |
 | `mesh state sync` | 提交本地状态、拉取/rebase、重建索引并推送 |
 | `mesh migrate plan|export|inspect|apply` | 创建并应用 host-approved 人格/记忆/skill migration capsule |
+| `mesh qmd remote-search` | 通过 SSH/Tailscale 查询 canonical host 的 QMD index |
 | `mesh evolution log` | 记录身份/偏好/SOP 变更 |
 | `mesh evolution read` | 读取 agent 进化日志 |
 | `mesh evolution sync` | 查看其他 agent 的最近变更 |

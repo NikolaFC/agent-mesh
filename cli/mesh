@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -2472,6 +2473,66 @@ def cmd_migrate_apply(args):
         print(f"Backups: {len(backups)} under {backup_root}")
 
 
+# ── Remote QMD search ────────────────────────────────────────
+
+def qmd_remote_target(host, user=None):
+    if not host or any(ch.isspace() for ch in host):
+        die("Invalid remote QMD host. Use a hostname/IP without spaces.")
+    if user and any(ch.isspace() for ch in user):
+        die("Invalid remote QMD user. Use a username without spaces.")
+    return f"{user}@{host}" if user else host
+
+
+def build_qmd_remote_command(args):
+    host = args.host or os.environ.get("QMD_REMOTE_HOST")
+    user = args.user or os.environ.get("QMD_REMOTE_USER")
+    workspace = args.workspace or os.environ.get("QMD_REMOTE_WORKSPACE")
+    if not host:
+        die("Remote QMD host is required. Pass --host or set QMD_REMOTE_HOST.")
+    if not workspace:
+        die("Remote QMD workspace is required. Pass --workspace or set QMD_REMOTE_WORKSPACE.")
+    target = qmd_remote_target(host, user=user)
+    script = args.script or os.environ.get("QMD_REMOTE_SCRIPT") or "scripts/qmd_search_fallback.py"
+    remote_args = [args.query, "-n", str(args.num), "--timeout", str(args.timeout)]
+    for collection in args.collection or []:
+        remote_args += ["-c", collection]
+    if args.cache or os.environ.get("QMD_REMOTE_CACHE"):
+        remote_args += ["--cache", args.cache or os.environ.get("QMD_REMOTE_CACHE")]
+    if args.json:
+        remote_args.append("--json")
+    if args.no_query_after_vsearch:
+        remote_args.append("--no-query-after-vsearch")
+    if args.min_search_score is not None:
+        remote_args += ["--min-search-score", str(args.min_search_score)]
+    if args.min_vsearch_score is not None:
+        remote_args += ["--min-vsearch-score", str(args.min_vsearch_score)]
+    qmd_cmd = " ".join(shlex.quote(x) for x in ["python3", script] + remote_args)
+    remote_cmd = f"set -euo pipefail; cd {shlex.quote(workspace)}; {qmd_cmd}"
+    ssh_cmd = [
+        "ssh",
+        "-o", "BatchMode=yes",
+        "-o", f"ConnectTimeout={args.ssh_timeout}",
+        target,
+        remote_cmd,
+    ]
+    return {"target": target, "workspace": workspace, "script": script, "remoteCommand": remote_cmd, "sshCommand": ssh_cmd}
+
+
+def cmd_qmd_remote_search(args):
+    built = build_qmd_remote_command(args)
+    if args.print_command:
+        print(json.dumps(built, indent=2, ensure_ascii=False))
+        return
+    timeout = max(5, int(args.ssh_timeout)) + max(1, int(args.timeout)) + 10
+    proc = subprocess.run(built["sshCommand"], text=True, capture_output=True, timeout=timeout)
+    if proc.stdout:
+        print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="", file=sys.stderr)
+    if proc.returncode != 0:
+        raise SystemExit(proc.returncode)
+
+
 # ── Evolution Index ───────────────────────────────────────────
 
 def cmd_evolution_index(args):
@@ -2766,6 +2827,27 @@ def build_parser():
     p_migrate_apply.add_argument("--no-backup", action="store_true", help="Do not back up overwritten files")
     p_migrate_apply.add_argument("--allow-unapproved", action="store_true", help="Apply a capsule without host approval (dangerous)")
     p_migrate_apply.set_defaults(func=cmd_migrate_apply)
+
+    p_qmd = sub.add_parser("qmd", help="Remote QMD retrieval helpers")
+    qmd_sub = p_qmd.add_subparsers(dest="qmd_command")
+
+    p_qmd_remote = qmd_sub.add_parser("remote-search", help="Run read-only QMD search on a remote host over SSH/Tailscale")
+    p_qmd_remote.add_argument("query", help="Search query")
+    p_qmd_remote.add_argument("--host", help="Remote SSH/Tailscale host (or QMD_REMOTE_HOST)")
+    p_qmd_remote.add_argument("--user", help="Remote SSH user (or QMD_REMOTE_USER)")
+    p_qmd_remote.add_argument("--workspace", help="Remote workspace containing scripts/qmd_search_fallback.py (or QMD_REMOTE_WORKSPACE)")
+    p_qmd_remote.add_argument("--script", help="Remote helper script path relative to workspace (default: scripts/qmd_search_fallback.py)")
+    p_qmd_remote.add_argument("--cache", help="Remote QMD XDG cache path (or QMD_REMOTE_CACHE)")
+    p_qmd_remote.add_argument("-n", "--num", type=int, default=5, help="Number of results (default: 5)")
+    p_qmd_remote.add_argument("-c", "--collection", action="append", default=[], help="Collection filter; can repeat")
+    p_qmd_remote.add_argument("--json", action="store_true", help="Request JSON output from remote helper")
+    p_qmd_remote.add_argument("--timeout", type=int, default=60, help="Remote QMD timeout in seconds (default: 60)")
+    p_qmd_remote.add_argument("--ssh-timeout", type=int, default=8, help="SSH connect timeout in seconds (default: 8)")
+    p_qmd_remote.add_argument("--min-search-score", type=float, default=None, help="Pass through to qmd_search_fallback.py")
+    p_qmd_remote.add_argument("--min-vsearch-score", type=float, default=None, help="Pass through to qmd_search_fallback.py")
+    p_qmd_remote.add_argument("--no-query-after-vsearch", action="store_true", help="Pass through to qmd_search_fallback.py")
+    p_qmd_remote.add_argument("--print-command", action="store_true", help="Print the SSH command JSON instead of executing it")
+    p_qmd_remote.set_defaults(func=cmd_qmd_remote_search)
 
     p_evo = sub.add_parser("evolution", help="Agent identity/preference/SOP change logs")
     evo_sub = p_evo.add_subparsers(dest="evolution_command")

@@ -149,6 +149,20 @@ mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspa
 
 The `openclaw-persona` preset includes core startup/persona files such as `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`; optional stable `memory/` content via `--include-memory`; and optional `skills/` + `agents/` content via `--include-skills`. It excludes secrets, credentials, device pairing state, `.env`, logs, runtime state, raw session/dream archives, and common key/cert files by default. `apply` is dry-run unless `--write` is passed and backs up overwritten files under `.mesh/migrate/backups/`.
 
+## Remote QMD retrieval
+
+A client device can query the canonical host's local QMD index without copying vector data or running a public service:
+
+```bash
+mesh qmd remote-search "Agent Mesh migration capsule" \
+  --host desktop-564viur-1.tail715c1b.ts.net \
+  --user nikolafc \
+  --workspace /home/nikolafc/.openclaw/workspace \
+  --json -n 5
+```
+
+This is a read-only SSH/Tailscale wrapper around the host-side `scripts/qmd_search_fallback.py`. You can also set `QMD_REMOTE_HOST`, `QMD_REMOTE_USER`, `QMD_REMOTE_WORKSPACE`, and optional `QMD_REMOTE_CACHE` in the client environment.
+
 ## What Gets Shared
 
 ### 📡 Pulse — Real-time heartbeats
@@ -255,6 +269,7 @@ CI runs the same core checks: `python3 scripts/verify_suite.py`, `python3 script
 | `mesh state push` | Commit and push local mesh state |
 | `mesh state sync` | Commit local state, pull/rebase, rebuild indexes, and push |
 | `mesh migrate plan|export|inspect|apply` | Create and apply host-approved persona/memory/skill migration capsules |
+| `mesh qmd remote-search` | Query a canonical host's QMD index over SSH/Tailscale |
 | `mesh evolution log` | Log an identity/preference/SOP change |
 | `mesh evolution read` | Read agent evolution logs |
 | `mesh evolution sync` | Check other agents' recent changes |

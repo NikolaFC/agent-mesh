@@ -227,6 +227,12 @@ Default `openclaw-persona` scope:
 
 Migration capsules are for trusted host-to-client onboarding. They are not a secret manager, not a device pairing system, and not a substitute for reviewing scripts inside migrated skills.
 
+## Remote QMD Retrieval
+
+`mesh qmd remote-search` lets client devices query the canonical host's local QMD index over SSH/Tailscale. This avoids copying vector stores to every device and avoids running a long-lived public search server.
+
+The command is intentionally read-only: it changes directory to the host workspace and invokes `scripts/qmd_search_fallback.py` with the supplied query, collection filters, result count, and JSON mode. Host, user, workspace, and cache can be supplied with flags or `QMD_REMOTE_*` environment variables.
+
 ## CLI Interface
 
 ```bash
@@ -269,6 +275,9 @@ mesh migrate plan --preset openclaw-persona [--root <dir>] [--include-memory] [-
 mesh migrate export --preset openclaw-persona --approved-by <host> --output <bundle.tar.gz> [--root <dir>] [--include-memory] [--include-skills]
 mesh migrate inspect <bundle.tar.gz> [--json]
 mesh migrate apply <bundle.tar.gz> --target-root <dir> [--write] [--no-backup]
+
+# Remote QMD retrieval
+mesh qmd remote-search <query> --host <host> --workspace <host-workspace> [--user <user>] [--json] [-n <num>] [-c <collection>]
 
 # Utilities
 mesh init              # Initialize .mesh/ in current repo

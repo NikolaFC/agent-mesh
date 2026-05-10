@@ -533,6 +533,30 @@ def test_migrate_capsule_plan_export_apply():
         check(bool(backups), "migrate apply backs up overwritten files")
 
 
+def test_qmd_remote_search_print_command():
+    with case("qmd remote-search command construction") as t:
+        rc, out, _ = run([
+            "qmd", "remote-search", "mesh migration",
+            "--host", "wsl.tailnet.ts.net",
+            "--user", "nikolafc",
+            "--workspace", "/home/nikolafc/.openclaw/workspace",
+            "--cache", "/home/nikolafc/.openclaw/agents/main/qmd/xdg-cache",
+            "-c", "memory-root",
+            "-n", "3",
+            "--json",
+            "--print-command",
+        ], cwd=t.tmpdir)
+        data = json.loads(out)
+        check(rc == 0, "qmd remote-search print-command succeeds")
+        check(data["target"] == "nikolafc@wsl.tailnet.ts.net", "qmd remote target correct")
+        check("qmd_search_fallback.py" in data["remoteCommand"], "qmd remote command uses helper")
+        check("memory-root" in data["remoteCommand"], "qmd remote command includes collection")
+        check(data["sshCommand"][0] == "ssh", "qmd remote command uses ssh")
+
+        rc, _, _ = run(["qmd", "remote-search", "test", "--print-command"], cwd=t.tmpdir, expect_rc=1)
+        check(rc == 1, "qmd remote-search requires host/workspace")
+
+
 def test_evolution_log():
     with case("evolution log + read") as t:
         rc, _, _ = run(["evolution", "log", "--agent", "hermes", "--file", "AGENTS.md", "--category", "sop", "--summary", "Added mesh workflow"], cwd=t.tmpdir)
@@ -623,6 +647,7 @@ if __name__ == "__main__":
         test_state_tailscale_url_and_configure,
         test_state_tailscale_host_init_and_join,
         test_migrate_capsule_plan_export_apply,
+        test_qmd_remote_search_print_command,
         test_evolution_log,
         test_evolution_multiple_entries,
         test_evolution_sync,

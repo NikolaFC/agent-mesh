@@ -102,6 +102,17 @@ mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root /path/to/client-wo
 
 Migration excludes `.env`, credentials, device pairing state, runtime state, logs, raw session/dream archives, key/cert files, and common caches by default. Review migrated memory scope and skill scripts before enabling them in a privileged runtime.
 
+If the client should query the host's QMD index without copying vector stores, configure remote QMD retrieval:
+
+```bash
+export QMD_REMOTE_HOST=desktop-564viur-1.tail715c1b.ts.net
+export QMD_REMOTE_USER=nikolafc
+export QMD_REMOTE_WORKSPACE=/home/nikolafc/.openclaw/workspace
+mesh qmd remote-search "Agent Mesh migration" --json -n 5
+```
+
+This is read-only SSH/Tailscale execution of the host-side `scripts/qmd_search_fallback.py`; it does not approve devices or expose a search server.
+
 Acceptance:
 
 ```bash
