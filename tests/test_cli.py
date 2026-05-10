@@ -478,6 +478,54 @@ def test_state_tailscale_host_init_and_join():
         check(rc == 1, "tailscale join refuses non-empty target")
 
 
+def test_migrate_capsule_plan_export_apply():
+    with case("migrate capsule plan/export/inspect/apply") as t:
+        src = Path(t.tmpdir) / "source"
+        dst = Path(t.tmpdir) / "target"
+        src.mkdir()
+        dst.mkdir()
+        (src / "AGENTS.md").write_text("# agents\n")
+        (src / "SOUL.md").write_text("# soul\n")
+        (src / ".env").write_text("SECRET=do-not-copy\n")
+        (src / "skills" / "demo").mkdir(parents=True)
+        (src / "skills" / "demo" / "SKILL.md").write_text("---\nname: demo\n---\n")
+        (src / "skills" / "demo" / "secret-token.txt").write_text("token\n")
+        (dst / "AGENTS.md").write_text("old\n")
+
+        rc, out, _ = run(["migrate", "plan", "--root", str(src), "--include-skills", "--json"], cwd=t.tmpdir)
+        plan = json.loads(out)
+        paths = {item["path"] for item in plan["files"]}
+        skipped = {item["path"] for item in plan["skipped"]}
+        check(rc == 0 and "AGENTS.md" in paths and "skills/demo/SKILL.md" in paths, "migrate plan includes persona and skill")
+        check("skills/demo/secret-token.txt" in skipped, "migrate plan excludes sensitive skill file")
+
+        bundle = Path(t.tmpdir) / "capsule.tar.gz"
+        rc, _, _ = run([
+            "migrate", "export",
+            "--root", str(src),
+            "--include-skills",
+            "--approved-by", "wsl-host",
+            "--output", str(bundle),
+        ], cwd=t.tmpdir)
+        check(rc == 0 and bundle.exists(), "migrate export creates bundle")
+
+        rc, out, _ = run(["migrate", "inspect", str(bundle), "--json"], cwd=t.tmpdir)
+        manifest = json.loads(out)
+        check(rc == 0 and manifest["approval"]["approved"] is True, "migrate inspect shows host approval")
+
+        rc, out, _ = run(["migrate", "apply", str(bundle), "--target-root", str(dst)], cwd=t.tmpdir)
+        dry = json.loads(out)
+        check(rc == 0 and dry["dryRun"] is True and not (dst / "SOUL.md").exists(), "migrate apply defaults to dry-run")
+
+        rc, _, _ = run(["migrate", "apply", str(bundle), "--target-root", str(dst), "--write"], cwd=t.tmpdir)
+        check(rc == 0, "migrate apply --write succeeds")
+        check((dst / "AGENTS.md").read_text() == "# agents\n", "migrate apply writes persona file")
+        check((dst / "skills" / "demo" / "SKILL.md").exists(), "migrate apply writes skill file")
+        check(not (dst / ".env").exists(), "migrate apply does not copy .env")
+        backups = list((dst / ".mesh" / "migrate" / "backups").rglob("AGENTS.md"))
+        check(bool(backups), "migrate apply backs up overwritten files")
+
+
 def test_evolution_log():
     with case("evolution log + read") as t:
         rc, _, _ = run(["evolution", "log", "--agent", "hermes", "--file", "AGENTS.md", "--category", "sop", "--summary", "Added mesh workflow"], cwd=t.tmpdir)
@@ -567,6 +615,7 @@ if __name__ == "__main__":
         test_state_configure_refuses_project_content_by_default,
         test_state_tailscale_url_and_configure,
         test_state_tailscale_host_init_and_join,
+        test_migrate_capsule_plan_export_apply,
         test_evolution_log,
         test_evolution_multiple_entries,
         test_evolution_sync,

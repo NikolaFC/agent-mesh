@@ -124,6 +124,30 @@ Safety notes:
 - State sync is explicit, not hidden auto-sync. If Git reports a rebase conflict, resolve it like any normal Git conflict.
 - Mesh mutations use a local `.mesh/.lock` and atomic file replacement on POSIX platforms so multi-terminal writes on the same machine are safer.
 
+## Host-approved persona / skill migration
+
+Agent Mesh can package a host-approved migration capsule for OpenClaw-style persona and rule files. This is intentionally not a blind workspace sync.
+
+```bash
+# On the canonical host: review the plan
+mesh migrate plan --preset openclaw-persona --root /path/to/openclaw-workspace --include-skills
+
+# Export a host-approved capsule
+mesh migrate export \
+  --preset openclaw-persona \
+  --root /path/to/openclaw-workspace \
+  --include-skills \
+  --approved-by wsl-host \
+  --output /tmp/openclaw-persona.tar.gz
+
+# On the client: inspect, dry-run, then write
+mesh migrate inspect /tmp/openclaw-persona.tar.gz
+mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspace
+mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspace --write
+```
+
+The `openclaw-persona` preset includes core startup/persona files such as `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, and optional `skills/` + `agents/` content. It excludes secrets, credentials, device pairing state, `.env`, logs, runtime state, and common key/cert files by default. `apply` is dry-run unless `--write` is passed and backs up overwritten files under `.mesh/migrate/backups/`.
+
 ## What Gets Shared
 
 ### 📡 Pulse — Real-time heartbeats
@@ -229,6 +253,7 @@ CI runs the same core checks: `python3 scripts/verify_suite.py`, `python3 script
 | `mesh state pull` | Pull/rebase remote mesh state |
 | `mesh state push` | Commit and push local mesh state |
 | `mesh state sync` | Commit local state, pull/rebase, rebuild indexes, and push |
+| `mesh migrate plan|export|inspect|apply` | Create and apply host-approved persona/skill migration capsules |
 | `mesh evolution log` | Log an identity/preference/SOP change |
 | `mesh evolution read` | Read agent evolution logs |
 | `mesh evolution sync` | Check other agents' recent changes |

@@ -79,6 +79,28 @@ export MESH_ROOT=~/agent-mesh-state
 
 Use `join` instead of `configure` for clients when possible; it makes the host/client direction explicit and refuses to overwrite non-empty local state.
 
+If the client also needs the host's OpenClaw persona/rules/skills, use a host-approved migration capsule after state sync is working:
+
+```bash
+# On the host, review first:
+mesh migrate plan --preset openclaw-persona --root /path/to/openclaw-workspace --include-skills
+
+# On the host, export only after approval:
+mesh migrate export \
+  --preset openclaw-persona \
+  --root /path/to/openclaw-workspace \
+  --include-skills \
+  --approved-by <host-agent-or-human> \
+  --output /tmp/openclaw-persona.tar.gz
+
+# On the client, inspect + dry-run before writing:
+mesh migrate inspect /tmp/openclaw-persona.tar.gz
+mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root /path/to/client-workspace
+mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root /path/to/client-workspace --write
+```
+
+Migration excludes `.env`, credentials, device pairing state, runtime state, logs, key/cert files, and common caches by default. Review migrated skill scripts before enabling them in a privileged runtime.
+
 Acceptance:
 
 ```bash

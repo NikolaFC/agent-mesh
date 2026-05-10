@@ -122,6 +122,30 @@ mesh state sync --message "mac-agent pulse/task update"  # 里程碑后同步
 - 状态同步是显式命令，不是隐藏自动同步；如果 Git 报 rebase conflict，就按普通 Git 冲突处理。
 - Mesh 写操作在 POSIX 平台使用 `.mesh/.lock` 和原子替换文件，多终端同时写更安全。
 
+## 主 host 批准的人格 / skill 迁移
+
+Agent Mesh 可以打包一个由主 host 批准的 migration capsule，用于迁移 OpenClaw 风格的人格、规则和 skill 文件。这不是盲目同步整个 workspace。
+
+```bash
+# canonical host 上：先审计划
+mesh migrate plan --preset openclaw-persona --root /path/to/openclaw-workspace --include-skills
+
+# 导出 host-approved capsule
+mesh migrate export \
+  --preset openclaw-persona \
+  --root /path/to/openclaw-workspace \
+  --include-skills \
+  --approved-by wsl-host \
+  --output /tmp/openclaw-persona.tar.gz
+
+# client 上：先 inspect，再 dry-run，最后 write
+mesh migrate inspect /tmp/openclaw-persona.tar.gz
+mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspace
+mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspace --write
+```
+
+`openclaw-persona` preset 会包含 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`USER.md`、`MEMORY.md` 等核心启动/人格文件，并可选包含 `skills/` + `agents/` 内容。默认排除 secrets、credentials、device pairing state、`.env`、logs、runtime state 和常见 key/cert 文件。`apply` 默认只 dry-run，只有传 `--write` 才写入，并会把被覆盖文件备份到 `.mesh/migrate/backups/`。
+
 ## 共享什么
 
 ### 📡 Pulse — 实时心跳
@@ -229,6 +253,7 @@ CI 跑同一组核心检查：`python3 scripts/verify_suite.py`、`python3 scrip
 | `mesh state pull` | 拉取/rebase 远端 mesh state |
 | `mesh state push` | 提交并推送本地 mesh state |
 | `mesh state sync` | 提交本地状态、拉取/rebase、重建索引并推送 |
+| `mesh migrate plan|export|inspect|apply` | 创建并应用 host-approved 人格/skill migration capsule |
 | `mesh evolution log` | 记录身份/偏好/SOP 变更 |
 | `mesh evolution read` | 读取 agent 进化日志 |
 | `mesh evolution sync` | 查看其他 agent 的最近变更 |

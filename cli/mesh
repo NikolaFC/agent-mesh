@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 VERSION = "0.3.0"
@@ -204,6 +205,17 @@ def atomic_write(path, content):
     stamp = f"{os.getpid()}-{hashlib.sha256(str(path).encode('utf-8')).hexdigest()[:8]}"
     tmp = path.with_name(f".{path.name}.tmp-{stamp}")
     with tmp.open("w", encoding="utf-8") as f:
+        f.write(content)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def atomic_write_bytes(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stamp = f"{os.getpid()}-{hashlib.sha256(str(path).encode('utf-8')).hexdigest()[:8]}"
+    tmp = path.with_name(f".{path.name}.tmp-{stamp}")
+    with tmp.open("wb") as f:
         f.write(content)
         f.flush()
         os.fsync(f.fileno())
@@ -2210,6 +2222,240 @@ def cmd_state_sync(args):
     success(f"✅ Mesh state synced ({'changes pushed' if changed else 'already up to date'})")
 
 
+# ── Migration capsules ───────────────────────────────────────
+
+MIGRATE_MANIFEST_NAME = ".mesh-migrate-manifest.json"
+MIGRATE_SCHEMA_ID = "agent-mesh/migrate/v1"
+OPENCLAW_PERSONA_FILES = [
+    "AGENTS.md",
+    "SOUL.md",
+    "IDENTITY.md",
+    "USER.md",
+    "MEMORY.md",
+    "STARTUP_ONEPAGE.md",
+    "HEARTBEAT.md",
+    "TOOLS.md",
+]
+MIGRATE_EXCLUDE_RE = re.compile(
+    r"(^|/)(\.git|\.openclaw|credentials|devices|state|backups|dist|node_modules|__pycache__)(/|$)|"
+    r"(^|/)(\.env($|\.)|.*credential.*|.*secret.*|.*token.*|.*password.*|.*private.*|paired\.json|pending\.json)$|"
+    r"\.(pem|key|crt|p12|pfx|sqlite|db|log|pyc)$",
+    re.IGNORECASE,
+)
+
+
+def migrate_rel(path, root):
+    return path.resolve().relative_to(root.resolve()).as_posix()
+
+
+def is_migrate_excluded(rel):
+    return bool(MIGRATE_EXCLUDE_RE.search(rel))
+
+
+def collect_migration_plan(root, preset="openclaw-persona", include_skills=False, max_file_bytes=5_000_000, max_total_bytes=50_000_000):
+    root = root.expanduser().resolve()
+    if preset != "openclaw-persona":
+        die("Only migrate preset 'openclaw-persona' is supported in this version.")
+    candidates = []
+    for rel in OPENCLAW_PERSONA_FILES:
+        p = root / rel
+        if p.is_file():
+            candidates.append(p)
+    if include_skills:
+        for base in (root / "skills", root / "agents"):
+            if base.is_dir():
+                candidates.extend(p for p in base.rglob("*") if p.is_file())
+
+    files = []
+    skipped = []
+    total = 0
+    seen = set()
+    for path in sorted(candidates, key=lambda p: migrate_rel(p, root)):
+        rel = migrate_rel(path, root)
+        if rel in seen:
+            continue
+        seen.add(rel)
+        if is_migrate_excluded(rel):
+            skipped.append({"path": rel, "reason": "sensitive-or-runtime-path"})
+            continue
+        size = path.stat().st_size
+        if size > max_file_bytes:
+            skipped.append({"path": rel, "reason": f"file-too-large>{max_file_bytes}"})
+            continue
+        if total + size > max_total_bytes:
+            skipped.append({"path": rel, "reason": f"bundle-too-large>{max_total_bytes}"})
+            continue
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        files.append({"path": rel, "bytes": size, "sha256": digest})
+        total += size
+    warnings = []
+    if not files:
+        warnings.append("No files matched the migration preset.")
+    if include_skills:
+        warnings.append("Skills may contain scripts/assets. Review the manifest before applying on another device.")
+    warnings.append("Secrets, credentials, device pairing state, .env files, logs, and runtime state are excluded by default.")
+    return {"root": str(root), "preset": preset, "includeSkills": include_skills, "files": files, "skipped": skipped, "totalBytes": total, "warnings": warnings}
+
+
+def migration_manifest(plan, approved_by=None):
+    content_hash = hashlib.sha256()
+    for item in plan["files"]:
+        content_hash.update(item["path"].encode("utf-8") + b"\0" + item["sha256"].encode("utf-8") + b"\0")
+    now = now_iso()
+    manifest = {
+        "schema": MIGRATE_SCHEMA_ID,
+        "createdAt": now,
+        "preset": plan["preset"],
+        "includeSkills": plan["includeSkills"],
+        "files": plan["files"],
+        "skipped": plan["skipped"],
+        "totalBytes": plan["totalBytes"],
+        "contentHash": content_hash.hexdigest(),
+        "approval": {
+            "approved": bool(approved_by),
+            "approvedBy": approved_by or "",
+            "approvedAt": now if approved_by else "",
+            "scope": "copy listed files only; no secrets/runtime state",
+        },
+        "warnings": plan["warnings"],
+    }
+    return manifest
+
+
+def read_migration_manifest_from_bundle(bundle):
+    with tarfile.open(bundle, "r:gz") as tar:
+        try:
+            member = tar.getmember(MIGRATE_MANIFEST_NAME)
+        except KeyError:
+            die("Migration bundle missing manifest.")
+        f = tar.extractfile(member)
+        if not f:
+            die("Migration manifest could not be read.")
+        return json.loads(f.read().decode("utf-8"))
+
+
+def validate_migration_manifest(manifest):
+    if manifest.get("schema") != MIGRATE_SCHEMA_ID:
+        die("Unsupported migration manifest schema.")
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        die("Invalid migration manifest: files must be a list.")
+    for item in files:
+        rel = item.get("path") if isinstance(item, dict) else None
+        if not rel or rel.startswith("/") or ".." in Path(rel).parts:
+            die(f"Invalid migration path in manifest: {rel!r}")
+        if is_migrate_excluded(rel):
+            die(f"Refusing sensitive/runtime path in manifest: {rel}")
+
+
+def cmd_migrate_plan(args):
+    root = Path(args.root or os.getcwd())
+    plan = collect_migration_plan(root, preset=args.preset, include_skills=args.include_skills)
+    if args.json:
+        print(json.dumps(plan, indent=2, ensure_ascii=False))
+        return
+    print(f"Preset: {plan['preset']}")
+    print(f"Root: {plan['root']}")
+    print(f"Files: {len(plan['files'])} ({plan['totalBytes']} bytes)")
+    for item in plan["files"]:
+        print(f"  + {item['path']} ({item['bytes']} bytes)")
+    for item in plan["skipped"]:
+        print(f"  - {item['path']} ({item['reason']})")
+    for warning in plan["warnings"]:
+        warn(f"⚠️  {warning}")
+
+
+def cmd_migrate_export(args):
+    root = Path(args.root or os.getcwd()).expanduser().resolve()
+    plan = collect_migration_plan(root, preset=args.preset, include_skills=args.include_skills)
+    if not args.approved_by:
+        die("Migration export requires host approval: pass --approved-by <host-agent-or-human>.")
+    manifest = migration_manifest(plan, approved_by=args.approved_by)
+    output = Path(args.output).expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(output, "w:gz") as tar:
+        manifest_bytes = json.dumps(manifest, indent=2, ensure_ascii=False).encode("utf-8")
+        info_obj = tarfile.TarInfo(MIGRATE_MANIFEST_NAME)
+        info_obj.size = len(manifest_bytes)
+        info_obj.mtime = int(datetime.datetime.now().timestamp())
+        import io
+        tar.addfile(info_obj, io.BytesIO(manifest_bytes))
+        for item in plan["files"]:
+            tar.add(root / item["path"], arcname=item["path"], recursive=False)
+    success(f"✅ Exported migration capsule: {output}")
+    print(f"Files: {len(plan['files'])}; skipped: {len(plan['skipped'])}; contentHash: {manifest['contentHash']}")
+
+
+def cmd_migrate_inspect(args):
+    manifest = read_migration_manifest_from_bundle(Path(args.bundle).expanduser())
+    validate_migration_manifest(manifest)
+    if args.json:
+        print(json.dumps(manifest, indent=2, ensure_ascii=False))
+        return
+    approval = manifest.get("approval") or {}
+    print(f"Schema: {manifest.get('schema')}")
+    print(f"Preset: {manifest.get('preset')}")
+    print(f"Approved: {approval.get('approved')} by {approval.get('approvedBy') or '-'}")
+    print(f"Files: {len(manifest.get('files') or [])}; skipped: {len(manifest.get('skipped') or [])}; bytes: {manifest.get('totalBytes')}")
+    print(f"Content hash: {manifest.get('contentHash')}")
+    for item in manifest.get("files") or []:
+        print(f"  + {item.get('path')} ({item.get('bytes')} bytes)")
+
+
+def safe_target_path(target_root, rel):
+    target_root = target_root.expanduser().resolve()
+    out = (target_root / rel).resolve()
+    if not str(out).startswith(str(target_root) + os.sep) and out != target_root:
+        die(f"Unsafe migration path: {rel}")
+    return out
+
+
+def cmd_migrate_apply(args):
+    bundle = Path(args.bundle).expanduser().resolve()
+    target_root = Path(args.target_root).expanduser().resolve()
+    manifest = read_migration_manifest_from_bundle(bundle)
+    validate_migration_manifest(manifest)
+    approval = manifest.get("approval") or {}
+    if not approval.get("approved") and not args.allow_unapproved:
+        die("Migration capsule is not host-approved. Re-export with --approved-by or pass --allow-unapproved deliberately.")
+    writes = []
+    backups = []
+    for item in manifest.get("files") or []:
+        rel = item["path"]
+        dst = safe_target_path(target_root, rel)
+        writes.append({"path": rel, "target": str(dst), "exists": dst.exists(), "bytes": item.get("bytes")})
+    if not args.write:
+        print(json.dumps({"dryRun": True, "targetRoot": str(target_root), "writes": writes, "warnings": manifest.get("warnings", [])}, indent=2, ensure_ascii=False))
+        return
+    target_root.mkdir(parents=True, exist_ok=True)
+    backup_root = target_root / ".mesh" / "migrate" / "backups" / datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    with tarfile.open(bundle, "r:gz") as tar:
+        members = {m.name: m for m in tar.getmembers()}
+        for item in manifest.get("files") or []:
+            rel = item["path"]
+            member = members.get(rel)
+            if not member or not member.isfile():
+                die(f"Bundle missing file listed in manifest: {rel}")
+            extracted = tar.extractfile(member)
+            if not extracted:
+                die(f"Could not read bundle file: {rel}")
+            payload = extracted.read()
+            digest = hashlib.sha256(payload).hexdigest()
+            if digest != item.get("sha256"):
+                die(f"Checksum mismatch for {rel}")
+            dst = safe_target_path(target_root, rel)
+            if dst.exists() and not args.no_backup:
+                backup = safe_target_path(backup_root, rel)
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(dst, backup)
+                backups.append(str(backup.relative_to(target_root)))
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_bytes(dst, payload)
+    success(f"✅ Applied migration capsule to {target_root}")
+    if backups:
+        print(f"Backups: {len(backups)} under {backup_root}")
+
+
 # ── Evolution Index ───────────────────────────────────────────
 
 def cmd_evolution_index(args):
@@ -2471,6 +2717,37 @@ def build_parser():
     p_export = sub.add_parser("export", help="Export status as markdown")
     p_export.add_argument("--output", "-o", help="Output file (default: stdout)")
     p_export.set_defaults(func=cmd_export)
+
+    p_migrate = sub.add_parser("migrate", help="Host-approved persona/skill migration capsules")
+    migrate_sub = p_migrate.add_subparsers(dest="migrate_command")
+
+    p_migrate_plan = migrate_sub.add_parser("plan", help="Show files that would be included in a migration capsule")
+    p_migrate_plan.add_argument("--preset", default="openclaw-persona", help="Migration preset (default: openclaw-persona)")
+    p_migrate_plan.add_argument("--root", help="Source root (default: cwd)")
+    p_migrate_plan.add_argument("--include-skills", action="store_true", help="Include skills/ and agents/ files, excluding sensitive/runtime paths")
+    p_migrate_plan.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    p_migrate_plan.set_defaults(func=cmd_migrate_plan)
+
+    p_migrate_export = migrate_sub.add_parser("export", help="Create a host-approved migration capsule")
+    p_migrate_export.add_argument("--preset", default="openclaw-persona", help="Migration preset (default: openclaw-persona)")
+    p_migrate_export.add_argument("--root", help="Source root (default: cwd)")
+    p_migrate_export.add_argument("--include-skills", action="store_true", help="Include skills/ and agents/ files, excluding sensitive/runtime paths")
+    p_migrate_export.add_argument("--approved-by", required=True, help="Host agent or human approving this capsule")
+    p_migrate_export.add_argument("--output", required=True, help="Output .tar.gz path")
+    p_migrate_export.set_defaults(func=cmd_migrate_export)
+
+    p_migrate_inspect = migrate_sub.add_parser("inspect", help="Inspect a migration capsule manifest")
+    p_migrate_inspect.add_argument("bundle", help="Migration capsule .tar.gz")
+    p_migrate_inspect.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    p_migrate_inspect.set_defaults(func=cmd_migrate_inspect)
+
+    p_migrate_apply = migrate_sub.add_parser("apply", help="Dry-run or apply a migration capsule")
+    p_migrate_apply.add_argument("bundle", help="Migration capsule .tar.gz")
+    p_migrate_apply.add_argument("--target-root", required=True, help="Target OpenClaw workspace/root")
+    p_migrate_apply.add_argument("--write", action="store_true", help="Actually write files; omitted means dry-run only")
+    p_migrate_apply.add_argument("--no-backup", action="store_true", help="Do not back up overwritten files")
+    p_migrate_apply.add_argument("--allow-unapproved", action="store_true", help="Apply a capsule without host approval (dangerous)")
+    p_migrate_apply.set_defaults(func=cmd_migrate_apply)
 
     p_evo = sub.add_parser("evolution", help="Agent identity/preference/SOP change logs")
     evo_sub = p_evo.add_subparsers(dest="evolution_command")
