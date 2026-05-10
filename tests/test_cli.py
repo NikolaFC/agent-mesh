@@ -490,13 +490,19 @@ def test_migrate_capsule_plan_export_apply():
         (src / "skills" / "demo").mkdir(parents=True)
         (src / "skills" / "demo" / "SKILL.md").write_text("---\nname: demo\n---\n")
         (src / "skills" / "demo" / "secret-token.txt").write_text("token\n")
+        (src / "memory" / "topics").mkdir(parents=True)
+        (src / "memory" / "topics" / "identity.md").write_text("stable memory\n")
+        (src / "memory" / ".dreams").mkdir(parents=True)
+        (src / "memory" / ".dreams" / "raw.txt").write_text("raw corpus\n")
         (dst / "AGENTS.md").write_text("old\n")
 
-        rc, out, _ = run(["migrate", "plan", "--root", str(src), "--include-skills", "--json"], cwd=t.tmpdir)
+        rc, out, _ = run(["migrate", "plan", "--root", str(src), "--include-skills", "--include-memory", "--json"], cwd=t.tmpdir)
         plan = json.loads(out)
         paths = {item["path"] for item in plan["files"]}
         skipped = {item["path"] for item in plan["skipped"]}
         check(rc == 0 and "AGENTS.md" in paths and "skills/demo/SKILL.md" in paths, "migrate plan includes persona and skill")
+        check("memory/topics/identity.md" in paths, "migrate plan includes stable memory")
+        check("memory/.dreams/raw.txt" not in paths, "migrate plan excludes raw memory corpus")
         check("skills/demo/secret-token.txt" in skipped, "migrate plan excludes sensitive skill file")
 
         bundle = Path(t.tmpdir) / "capsule.tar.gz"
@@ -504,6 +510,7 @@ def test_migrate_capsule_plan_export_apply():
             "migrate", "export",
             "--root", str(src),
             "--include-skills",
+            "--include-memory",
             "--approved-by", "wsl-host",
             "--output", str(bundle),
         ], cwd=t.tmpdir)

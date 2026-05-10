@@ -136,6 +136,7 @@ mesh migrate plan --preset openclaw-persona --root /path/to/openclaw-workspace -
 mesh migrate export \
   --preset openclaw-persona \
   --root /path/to/openclaw-workspace \
+  --include-memory \
   --include-skills \
   --approved-by wsl-host \
   --output /tmp/openclaw-persona.tar.gz
@@ -146,7 +147,7 @@ mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspa
 mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspace --write
 ```
 
-The `openclaw-persona` preset includes core startup/persona files such as `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, and optional `skills/` + `agents/` content. It excludes secrets, credentials, device pairing state, `.env`, logs, runtime state, and common key/cert files by default. `apply` is dry-run unless `--write` is passed and backs up overwritten files under `.mesh/migrate/backups/`.
+The `openclaw-persona` preset includes core startup/persona files such as `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`; optional stable `memory/` content via `--include-memory`; and optional `skills/` + `agents/` content via `--include-skills`. It excludes secrets, credentials, device pairing state, `.env`, logs, runtime state, raw session/dream archives, and common key/cert files by default. `apply` is dry-run unless `--write` is passed and backs up overwritten files under `.mesh/migrate/backups/`.
 
 ## What Gets Shared
 
@@ -253,7 +254,7 @@ CI runs the same core checks: `python3 scripts/verify_suite.py`, `python3 script
 | `mesh state pull` | Pull/rebase remote mesh state |
 | `mesh state push` | Commit and push local mesh state |
 | `mesh state sync` | Commit local state, pull/rebase, rebuild indexes, and push |
-| `mesh migrate plan|export|inspect|apply` | Create and apply host-approved persona/skill migration capsules |
+| `mesh migrate plan|export|inspect|apply` | Create and apply host-approved persona/memory/skill migration capsules |
 | `mesh evolution log` | Log an identity/preference/SOP change |
 | `mesh evolution read` | Read agent evolution logs |
 | `mesh evolution sync` | Check other agents' recent changes |

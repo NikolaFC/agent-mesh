@@ -134,6 +134,7 @@ mesh migrate plan --preset openclaw-persona --root /path/to/openclaw-workspace -
 mesh migrate export \
   --preset openclaw-persona \
   --root /path/to/openclaw-workspace \
+  --include-memory \
   --include-skills \
   --approved-by wsl-host \
   --output /tmp/openclaw-persona.tar.gz
@@ -144,7 +145,7 @@ mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspa
 mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspace --write
 ```
 
-`openclaw-persona` preset 会包含 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`USER.md`、`MEMORY.md` 等核心启动/人格文件，并可选包含 `skills/` + `agents/` 内容。默认排除 secrets、credentials、device pairing state、`.env`、logs、runtime state 和常见 key/cert 文件。`apply` 默认只 dry-run，只有传 `--write` 才写入，并会把被覆盖文件备份到 `.mesh/migrate/backups/`。
+`openclaw-persona` preset 会包含 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`USER.md`、`MEMORY.md` 等核心启动/人格文件；可通过 `--include-memory` 包含稳定 `memory/` 内容；也可通过 `--include-skills` 包含 `skills/` + `agents/` 内容。默认排除 secrets、credentials、device pairing state、`.env`、logs、runtime state、raw session/dream archives 和常见 key/cert 文件。`apply` 默认只 dry-run，只有传 `--write` 才写入，并会把被覆盖文件备份到 `.mesh/migrate/backups/`。
 
 ## 共享什么
 
@@ -253,7 +254,7 @@ CI 跑同一组核心检查：`python3 scripts/verify_suite.py`、`python3 scrip
 | `mesh state pull` | 拉取/rebase 远端 mesh state |
 | `mesh state push` | 提交并推送本地 mesh state |
 | `mesh state sync` | 提交本地状态、拉取/rebase、重建索引并推送 |
-| `mesh migrate plan|export|inspect|apply` | 创建并应用 host-approved 人格/skill migration capsule |
+| `mesh migrate plan|export|inspect|apply` | 创建并应用 host-approved 人格/记忆/skill migration capsule |
 | `mesh evolution log` | 记录身份/偏好/SOP 变更 |
 | `mesh evolution read` | 读取 agent 进化日志 |
 | `mesh evolution sync` | 查看其他 agent 的最近变更 |

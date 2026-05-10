@@ -221,8 +221,9 @@ Recommended pattern: run `mesh state sync` before work and after meaningful puls
 Default `openclaw-persona` scope:
 
 - core startup/persona files: `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, `STARTUP_ONEPAGE.md`, `HEARTBEAT.md`, `TOOLS.md`
+- optional stable `memory/` files via `--include-memory`, excluding raw/session/dream archives by default
 - optional `skills/` and `agents/` trees via `--include-skills`
-- default exclusions: `.env`, credentials, device pairing state, runtime state, logs, key/cert files, `.git`, `.openclaw`, `node_modules`, backups, and caches
+- default exclusions: `.env`, credentials, device pairing state, runtime state, logs, raw session/dream archives, key/cert files, `.git`, `.openclaw`, `node_modules`, backups, and caches
 
 Migration capsules are for trusted host-to-client onboarding. They are not a secret manager, not a device pairing system, and not a substitute for reviewing scripts inside migrated skills.
 
@@ -264,8 +265,8 @@ mesh state push [--message <text>]
 mesh state sync [--message <text>]
 
 # Host-approved migration capsules
-mesh migrate plan --preset openclaw-persona [--root <dir>] [--include-skills] [--json]
-mesh migrate export --preset openclaw-persona --approved-by <host> --output <bundle.tar.gz> [--root <dir>] [--include-skills]
+mesh migrate plan --preset openclaw-persona [--root <dir>] [--include-memory] [--include-skills] [--json]
+mesh migrate export --preset openclaw-persona --approved-by <host> --output <bundle.tar.gz> [--root <dir>] [--include-memory] [--include-skills]
 mesh migrate inspect <bundle.tar.gz> [--json]
 mesh migrate apply <bundle.tar.gz> --target-root <dir> [--write] [--no-backup]
 

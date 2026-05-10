@@ -2252,7 +2252,7 @@ def is_migrate_excluded(rel):
     return bool(MIGRATE_EXCLUDE_RE.search(rel))
 
 
-def collect_migration_plan(root, preset="openclaw-persona", include_skills=False, max_file_bytes=5_000_000, max_total_bytes=50_000_000):
+def collect_migration_plan(root, preset="openclaw-persona", include_skills=False, include_memory=False, max_file_bytes=5_000_000, max_total_bytes=50_000_000):
     root = root.expanduser().resolve()
     if preset != "openclaw-persona":
         die("Only migrate preset 'openclaw-persona' is supported in this version.")
@@ -2265,6 +2265,19 @@ def collect_migration_plan(root, preset="openclaw-persona", include_skills=False
         for base in (root / "skills", root / "agents"):
             if base.is_dir():
                 candidates.extend(p for p in base.rglob("*") if p.is_file())
+    if include_memory:
+        memory_root = root / "memory"
+        if memory_root.is_dir():
+            for p in memory_root.rglob("*"):
+                if not p.is_file():
+                    continue
+                rel = migrate_rel(p, root)
+                parts = Path(rel).parts
+                if len(parts) > 1 and parts[0] == "memory" and parts[1] in {".dreams", "archives", "session-archive", "sessions", "raw", "tmp"}:
+                    continue
+                if p.suffix.lower() not in {".md", ".json", ".jsonl", ".txt"}:
+                    continue
+                candidates.append(p)
 
     files = []
     skipped = []
@@ -2293,8 +2306,10 @@ def collect_migration_plan(root, preset="openclaw-persona", include_skills=False
         warnings.append("No files matched the migration preset.")
     if include_skills:
         warnings.append("Skills may contain scripts/assets. Review the manifest before applying on another device.")
+    if include_memory:
+        warnings.append("Memory migration includes stable memory files only; raw session archives/dream corpora/runtime memory are skipped by default.")
     warnings.append("Secrets, credentials, device pairing state, .env files, logs, and runtime state are excluded by default.")
-    return {"root": str(root), "preset": preset, "includeSkills": include_skills, "files": files, "skipped": skipped, "totalBytes": total, "warnings": warnings}
+    return {"root": str(root), "preset": preset, "includeSkills": include_skills, "includeMemory": include_memory, "files": files, "skipped": skipped, "totalBytes": total, "warnings": warnings}
 
 
 def migration_manifest(plan, approved_by=None):
@@ -2307,6 +2322,7 @@ def migration_manifest(plan, approved_by=None):
         "createdAt": now,
         "preset": plan["preset"],
         "includeSkills": plan["includeSkills"],
+        "includeMemory": plan.get("includeMemory", False),
         "files": plan["files"],
         "skipped": plan["skipped"],
         "totalBytes": plan["totalBytes"],
@@ -2350,7 +2366,7 @@ def validate_migration_manifest(manifest):
 
 def cmd_migrate_plan(args):
     root = Path(args.root or os.getcwd())
-    plan = collect_migration_plan(root, preset=args.preset, include_skills=args.include_skills)
+    plan = collect_migration_plan(root, preset=args.preset, include_skills=args.include_skills, include_memory=args.include_memory)
     if args.json:
         print(json.dumps(plan, indent=2, ensure_ascii=False))
         return
@@ -2367,7 +2383,7 @@ def cmd_migrate_plan(args):
 
 def cmd_migrate_export(args):
     root = Path(args.root or os.getcwd()).expanduser().resolve()
-    plan = collect_migration_plan(root, preset=args.preset, include_skills=args.include_skills)
+    plan = collect_migration_plan(root, preset=args.preset, include_skills=args.include_skills, include_memory=args.include_memory)
     if not args.approved_by:
         die("Migration export requires host approval: pass --approved-by <host-agent-or-human>.")
     manifest = migration_manifest(plan, approved_by=args.approved_by)
@@ -2725,6 +2741,7 @@ def build_parser():
     p_migrate_plan.add_argument("--preset", default="openclaw-persona", help="Migration preset (default: openclaw-persona)")
     p_migrate_plan.add_argument("--root", help="Source root (default: cwd)")
     p_migrate_plan.add_argument("--include-skills", action="store_true", help="Include skills/ and agents/ files, excluding sensitive/runtime paths")
+    p_migrate_plan.add_argument("--include-memory", action="store_true", help="Include stable memory/ files, excluding raw/session/runtime archives")
     p_migrate_plan.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     p_migrate_plan.set_defaults(func=cmd_migrate_plan)
 
@@ -2732,6 +2749,7 @@ def build_parser():
     p_migrate_export.add_argument("--preset", default="openclaw-persona", help="Migration preset (default: openclaw-persona)")
     p_migrate_export.add_argument("--root", help="Source root (default: cwd)")
     p_migrate_export.add_argument("--include-skills", action="store_true", help="Include skills/ and agents/ files, excluding sensitive/runtime paths")
+    p_migrate_export.add_argument("--include-memory", action="store_true", help="Include stable memory/ files, excluding raw/session/runtime archives")
     p_migrate_export.add_argument("--approved-by", required=True, help="Host agent or human approving this capsule")
     p_migrate_export.add_argument("--output", required=True, help="Output .tar.gz path")
     p_migrate_export.set_defaults(func=cmd_migrate_export)

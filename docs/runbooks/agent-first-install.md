@@ -83,12 +83,13 @@ If the client also needs the host's OpenClaw persona/rules/skills, use a host-ap
 
 ```bash
 # On the host, review first:
-mesh migrate plan --preset openclaw-persona --root /path/to/openclaw-workspace --include-skills
+mesh migrate plan --preset openclaw-persona --root /path/to/openclaw-workspace --include-memory --include-skills
 
 # On the host, export only after approval:
 mesh migrate export \
   --preset openclaw-persona \
   --root /path/to/openclaw-workspace \
+  --include-memory \
   --include-skills \
   --approved-by <host-agent-or-human> \
   --output /tmp/openclaw-persona.tar.gz
@@ -99,7 +100,7 @@ mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root /path/to/client-wo
 mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root /path/to/client-workspace --write
 ```
 
-Migration excludes `.env`, credentials, device pairing state, runtime state, logs, key/cert files, and common caches by default. Review migrated skill scripts before enabling them in a privileged runtime.
+Migration excludes `.env`, credentials, device pairing state, runtime state, logs, raw session/dream archives, key/cert files, and common caches by default. Review migrated memory scope and skill scripts before enabling them in a privileged runtime.
 
 Acceptance:
 

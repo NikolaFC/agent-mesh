@@ -22,7 +22,7 @@ This project follows SemVer. See `VERSION` for the current package version.
   - `mesh state tailscale url`
   - `mesh state tailscale configure`
   - `mesh state tailscale clone`
-- Added `mesh migrate plan/export/inspect/apply` for host-approved OpenClaw persona/rule/skill migration capsules.
+- Added `mesh migrate plan/export/inspect/apply` for host-approved OpenClaw persona/rule/memory/skill migration capsules, including `--include-memory` for stable `memory/` files.
 - Added tests that simulate WSL ↔ Mac style sharing through a local bare Git remote, verify Tailscale host/client generation/configuration, and exercise migration capsule dry-run/write behavior.
 
 ### Changed
@@ -30,7 +30,7 @@ This project follows SemVer. See `VERSION` for the current package version.
 - Mutating CLI commands now use a local `.mesh/.lock` on POSIX platforms.
 - JSON and Markdown writes now use same-directory temporary files followed by atomic replacement.
 - Documentation now recommends a dedicated private mesh-state repo for cross-device sharing and keeps `mesh sync` reserved for GitHub PR sync.
-- Documentation now separates mesh state sync from persona/skill migration, with migration excluded-path guardrails.
+- Documentation now separates mesh state sync from persona/memory/skill migration, with migration excluded-path guardrails.
 
 ### Safety
 
