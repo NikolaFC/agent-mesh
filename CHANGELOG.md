@@ -17,10 +17,12 @@ This project follows SemVer. See `VERSION` for the current package version.
   - `mesh state push`
   - `mesh state sync`
 - Added Tailscale SSH helpers for private tailnet-backed state repos:
+  - `mesh state tailscale host-init`
+  - `mesh state tailscale join`
   - `mesh state tailscale url`
   - `mesh state tailscale configure`
   - `mesh state tailscale clone`
-- Added tests that simulate WSL ↔ Mac style sharing through a local bare Git remote and verify Tailscale remote generation/configuration.
+- Added tests that simulate WSL ↔ Mac style sharing through a local bare Git remote and verify Tailscale host/client generation/configuration.
 
 ### Changed
 

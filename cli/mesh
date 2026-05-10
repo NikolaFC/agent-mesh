@@ -2060,6 +2060,25 @@ def tailscale_setup_hint(remote, repo_path):
     )
 
 
+def is_bare_git_repo(path):
+    if not path.exists():
+        return False
+    r = subprocess.run(["git", "--git-dir", str(path), "rev-parse", "--is-bare-repository"], capture_output=True, text=True, timeout=30)
+    return r.returncode == 0 and r.stdout.strip() == "true"
+
+
+def ensure_bare_repo(path):
+    path = path.expanduser().resolve()
+    if path.exists() and not is_bare_git_repo(path):
+        die(f"Path exists but is not a bare Git repo: {path}")
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        r = subprocess.run(["git", "init", "--bare", str(path)], capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            die(f"git init --bare failed: {(r.stderr or r.stdout).strip()}")
+    return path
+
+
 def cmd_state_tailscale_url(args):
     remote = tailscale_git_remote(args.host, args.repo_path, user=args.user)
     print(remote)
@@ -2081,6 +2100,44 @@ def cmd_state_tailscale_clone(args):
     remote = tailscale_git_remote(args.host, args.repo_path, user=args.user)
     clone_state_root(remote, target, branch=args.branch)
     success(f"✅ Cloned Tailscale SSH mesh state root to {target}")
+    print(f"Set this for agents that run elsewhere: export MESH_ROOT={target}")
+
+
+def cmd_state_tailscale_host_init(args):
+    bare = ensure_bare_repo(Path(args.repo_path))
+    state_root = Path(args.state_root).expanduser().resolve()
+    if state_root.exists() and any(state_root.iterdir()) and not (state_root / ".mesh").is_dir():
+        die(f"State root exists but is not an Agent Mesh root: {state_root}")
+    state_root.mkdir(parents=True, exist_ok=True)
+    ensure_mesh_structure(state_root)
+    configure_state_remote(state_root, str(bare), branch=args.branch, allow_project_repo=True)
+    if args.seed_from:
+        seed = Path(args.seed_from).expanduser().resolve()
+        source_mesh = seed if seed.name == ".mesh" else seed / ".mesh"
+        if not source_mesh.is_dir():
+            die(f"Seed path does not contain a .mesh directory: {seed}")
+        shutil.copytree(source_mesh, state_root / ".mesh", dirs_exist_ok=True, ignore=shutil.ignore_patterns(".lock", ".state-sync"))
+        configure_state_remote(state_root, str(bare), branch=args.branch, allow_project_repo=True)
+    committed = git_commit_pending(state_root, args.message or f"mesh: initialize Tailscale host state {now_iso()}")
+    git_cmd(state_root, ["push", "-u", "origin", args.branch])
+    success(f"✅ Tailscale mesh state host initialized at {state_root} -> {bare} ({'committed' if committed else 'no local changes'})")
+    if args.host:
+        remote = tailscale_git_remote(args.host, str(bare), user=args.user)
+        print("Client join command:")
+        user_part = f" --user {args.user}" if args.user else ""
+        print(f"  mesh state tailscale join --host {args.host}{user_part} --repo-path {bare} --target ~/agent-mesh-state")
+
+
+def cmd_state_tailscale_join(args):
+    target = Path(args.target).expanduser().resolve()
+    remote = tailscale_git_remote(args.host, args.repo_path, user=args.user)
+    if target.exists() and any(target.iterdir()):
+        die(f"Target is not empty: {target}. Move it aside or choose a fresh --target; join will not overwrite existing state.")
+    clone_state_root(remote, target, branch=args.branch)
+    if args.sync:
+        git_cmd(target, ["pull", "--rebase", "origin", args.branch])
+        rebuild_indexes(target, mesh_paths(target))
+    success(f"✅ Joined Tailscale SSH mesh state at {target}")
     print(f"Set this for agents that run elsewhere: export MESH_ROOT={target}")
 
 
@@ -2356,6 +2413,16 @@ def build_parser():
         parser.add_argument("--repo-path", required=True, help="Absolute path to bare state repo on the Tailscale SSH host")
         parser.add_argument("--user", help="SSH username (omit to use the local SSH default)")
 
+    p_tail_host = tail_sub.add_parser("host-init", help="Initialize this machine as the canonical Tailscale mesh state host")
+    p_tail_host.add_argument("--repo-path", default="~/agent-mesh-state.git", help="Bare state repo path on this host (default: ~/agent-mesh-state.git)")
+    p_tail_host.add_argument("--state-root", default="~/agent-mesh-state", help="Local working state root on this host (default: ~/agent-mesh-state)")
+    p_tail_host.add_argument("--seed-from", help="Optional existing project root or .mesh directory to seed into the state root")
+    p_tail_host.add_argument("--host", help="This host's Tailscale MagicDNS name/IP, used only to print a client join command")
+    p_tail_host.add_argument("--user", help="SSH username for the printed client join command")
+    p_tail_host.add_argument("--branch", default="main", help="State branch (default: main)")
+    p_tail_host.add_argument("--message", help="Initial commit message")
+    p_tail_host.set_defaults(func=cmd_state_tailscale_host_init)
+
     p_tail_url = tail_sub.add_parser("url", help="Print the Git remote URL for a Tailscale SSH mesh state repo")
     add_tail_common(p_tail_url)
     p_tail_url.add_argument("--hint", action="store_true", help="Print one-time remote host setup hints")
@@ -2373,6 +2440,13 @@ def build_parser():
     p_tail_clone.add_argument("--target", required=True, help="Directory to clone the mesh state root into")
     p_tail_clone.add_argument("--branch", default="main", help="State branch (default: main)")
     p_tail_clone.set_defaults(func=cmd_state_tailscale_clone)
+
+    p_tail_join = tail_sub.add_parser("join", help="Join a Tailscale SSH mesh state host as a client")
+    add_tail_common(p_tail_join)
+    p_tail_join.add_argument("--target", default="~/agent-mesh-state", help="Directory to clone the mesh state root into (default: ~/agent-mesh-state)")
+    p_tail_join.add_argument("--branch", default="main", help="State branch (default: main)")
+    p_tail_join.add_argument("--sync", action="store_true", help="Pull/rebase and rebuild indexes after clone")
+    p_tail_join.set_defaults(func=cmd_state_tailscale_join)
 
     p_state_status = state_sub.add_parser("status", help="Show mesh state sync configuration and Git status")
     p_state_status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
@@ -2456,7 +2530,7 @@ def command_requires_lock(args):
     if command == "state":
         state_command = getattr(args, "state_command", None)
         if state_command == "tailscale":
-            return getattr(args, "tailscale_command", None) == "configure"
+            return getattr(args, "tailscale_command", None) in {"configure", "host-init"}
         return state_command in {"configure", "pull", "push", "sync"}
     return False
 

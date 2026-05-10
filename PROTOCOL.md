@@ -205,6 +205,8 @@ For cross-device sharing, Agent Mesh intentionally does not run a server and doe
 ```bash
 mesh state configure --remote <git-url> [--branch main]
 mesh state clone --remote <git-url> --target ~/agent-mesh-state
+mesh state tailscale host-init --repo-path ~/agent-mesh-state.git --state-root ~/agent-mesh-state [--seed-from <project-root>]
+mesh state tailscale join --host <tailnet-host> --repo-path </absolute/state.git> --target ~/agent-mesh-state
 mesh state tailscale configure --host <tailnet-host> --repo-path </absolute/state.git>
 mesh state tailscale clone --host <tailnet-host> --repo-path </absolute/state.git> --target ~/agent-mesh-state
 mesh state sync   # commit local state, pull/rebase remote state, rebuild indexes, push
@@ -239,6 +241,8 @@ mesh shared update <file> --content <text>  # Replace content
 # Cross-terminal / cross-device state sync
 mesh state configure --remote <git-url> [--branch main]
 mesh state clone --remote <git-url> --target <dir> [--branch main]
+mesh state tailscale host-init [--repo-path <path>] [--state-root <dir>] [--seed-from <project-root>] [--host <host>] [--user <user>]
+mesh state tailscale join --host <host> --repo-path <path> [--target <dir>] [--user <user>]
 mesh state tailscale url --host <host> --repo-path <path> [--user <user>]
 mesh state tailscale configure --host <host> --repo-path <path> [--user <user>]
 mesh state tailscale clone --host <host> --repo-path <path> --target <dir> [--user <user>]

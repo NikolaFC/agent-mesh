@@ -57,21 +57,27 @@ export MESH_ROOT=~/agent-mesh-state
 mesh state sync
 ```
 
-For the private Tailscale SSH variant, host the bare state repo on one tailnet machine:
+For the private Tailscale SSH variant, pick one canonical tailnet host and let every other machine join it:
 
 ```bash
-# On the Tailscale SSH host, one time:
-mkdir -p /Users/satoshi/agent-mesh-state.git
-git init --bare /Users/satoshi/agent-mesh-state.git
+# On the canonical Tailscale SSH host, one time:
+mesh state tailscale host-init \
+  --repo-path ~/agent-mesh-state.git \
+  --state-root ~/agent-mesh-state \
+  --seed-from /path/to/current/project \
+  --host desktop-564viur-1.tail715c1b.ts.net \
+  --user nikolafc
 
-# On each participating agent machine:
-mesh state tailscale clone \
-  --host macbook.tailnet.ts.net \
-  --user satoshi \
-  --repo-path /Users/satoshi/agent-mesh-state.git \
+# On each client agent machine:
+mesh state tailscale join \
+  --host desktop-564viur-1.tail715c1b.ts.net \
+  --user nikolafc \
+  --repo-path /home/nikolafc/agent-mesh-state.git \
   --target ~/agent-mesh-state
 export MESH_ROOT=~/agent-mesh-state
 ```
+
+Use `join` instead of `configure` for clients when possible; it makes the host/client direction explicit and refuses to overwrite non-empty local state.
 
 Acceptance:
 

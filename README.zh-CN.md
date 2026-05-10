@@ -86,31 +86,27 @@ export MESH_ROOT=~/agent-mesh-state
 mesh state sync
 ```
 
-如果想完全走自己的 tailnet，可以把 bare Git 状态仓库放在一台 Tailscale SSH 主机上：
+如果想完全走自己的 tailnet，先选**一台 canonical Tailscale SSH host**（通常是跑主 agents 的常在线机器），其他设备都 join 它：
 
 ```bash
-# Mac / 常在线主机，一次性执行：
-mkdir -p /Users/satoshi/agent-mesh-state.git
-git init --bare /Users/satoshi/agent-mesh-state.git
+# canonical host，例如 WSL：
+mesh state tailscale host-init \
+  --repo-path ~/agent-mesh-state.git \
+  --state-root ~/agent-mesh-state \
+  --seed-from /path/to/current/project \
+  --host desktop-564viur-1.tail715c1b.ts.net \
+  --user nikolafc
 
-# WSL / 另一台机器：
-mkdir -p ~/agent-mesh-state
-cd ~/agent-mesh-state
-mesh init
-mesh state tailscale configure \
-  --host macbook.tailnet.ts.net \
-  --user satoshi \
-  --repo-path /Users/satoshi/agent-mesh-state.git
-mesh state push --message "initial mesh state"
-
-# 再接入另一台设备：
-mesh state tailscale clone \
-  --host macbook.tailnet.ts.net \
-  --user satoshi \
-  --repo-path /Users/satoshi/agent-mesh-state.git \
+# client 设备，例如 Mac：
+mesh state tailscale join \
+  --host desktop-564viur-1.tail715c1b.ts.net \
+  --user nikolafc \
+  --repo-path /home/nikolafc/agent-mesh-state.git \
   --target ~/agent-mesh-state
 export MESH_ROOT=~/agent-mesh-state
 ```
+
+`host-init` 会创建/复用本机 bare repo 和工作 state root；`join` 会拒绝覆盖非空 target，避免把 Mac 上误建的本地 host state 丢掉。
 
 推荐 Agent 工作循环：
 
@@ -229,7 +225,7 @@ CI 跑同一组核心检查：`python3 scripts/verify_suite.py`、`python3 scrip
 | `mesh sync [--repo]` | 从 GitHub 同步 PR 状态 |
 | `mesh state configure` | 配置跨设备 mesh state 的私有 Git 后端 |
 | `mesh state clone` | 克隆共享 mesh state root，并输出 `MESH_ROOT` 设置方式 |
-| `mesh state tailscale url|configure|clone` | 使用 Tailscale SSH 主机作为私有 Git state backend |
+| `mesh state tailscale host-init|join|url|configure|clone` | 使用 Tailscale SSH 主机作为私有 Git state backend |
 | `mesh state pull` | 拉取/rebase 远端 mesh state |
 | `mesh state push` | 提交并推送本地 mesh state |
 | `mesh state sync` | 提交本地状态、拉取/rebase、重建索引并推送 |

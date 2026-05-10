@@ -444,6 +444,40 @@ def test_state_tailscale_url_and_configure():
         check(rc == 0 and data["remote"] == expected, "tailscale remote stored in state config")
 
 
+def test_state_tailscale_host_init_and_join():
+    with case("state tailscale host-init + join") as t:
+        tmp = Path(t.tmpdir)
+        seed = tmp / "seed"
+        seed.mkdir()
+        run(["init"], cwd=str(seed))
+        run(["pulse", "update", "--agent", "seed-agent", "--status", "working", "--summary", "seeded"], cwd=str(seed))
+
+        bare = tmp / "host.git"
+        state_root = tmp / "host-state"
+        rc, out, _ = run([
+            "state", "tailscale", "host-init",
+            "--repo-path", str(bare),
+            "--state-root", str(state_root),
+            "--seed-from", str(seed),
+            "--host", "wsl.tailnet.ts.net",
+            "--user", "nikolafc",
+        ], cwd=t.tmpdir)
+        check(rc == 0, "tailscale host-init succeeds")
+        check(bare.exists(), "bare host repo created")
+        check("mesh state tailscale join" in out, "host-init prints join command")
+
+        occupied = tmp / "occupied"
+        occupied.mkdir()
+        (occupied / "note.txt").write_text("do not overwrite\n")
+        rc, _, _ = run([
+            "state", "tailscale", "join",
+            "--host", "wsl.tailnet.ts.net",
+            "--repo-path", str(bare),
+            "--target", str(occupied),
+        ], cwd=t.tmpdir, expect_rc=1)
+        check(rc == 1, "tailscale join refuses non-empty target")
+
+
 def test_evolution_log():
     with case("evolution log + read") as t:
         rc, _, _ = run(["evolution", "log", "--agent", "hermes", "--file", "AGENTS.md", "--category", "sop", "--summary", "Added mesh workflow"], cwd=t.tmpdir)
@@ -532,6 +566,7 @@ if __name__ == "__main__":
         test_state_sync_between_two_roots,
         test_state_configure_refuses_project_content_by_default,
         test_state_tailscale_url_and_configure,
+        test_state_tailscale_host_init_and_join,
         test_evolution_log,
         test_evolution_multiple_entries,
         test_evolution_sync,
