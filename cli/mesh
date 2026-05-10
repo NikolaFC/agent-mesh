@@ -1992,49 +1992,95 @@ def git_remote_branch_exists(root, branch):
     return r.returncode == 0
 
 
-def cmd_state_configure(args):
-    root = require_mesh_root()
+def configure_state_remote(root, remote, branch="main", allow_project_repo=False):
     ensure_mesh_structure(root)
-    ensure_state_git(root, remote=args.remote, branch=args.branch, allow_project_repo=args.allow_project_repo)
+    ensure_state_git(root, remote=remote, branch=branch, allow_project_repo=allow_project_repo)
     config = load_mesh_config(root)
     config.setdefault("stateSync", {})
     config["stateSync"].update({
         "backend": "git",
-        "remote": args.remote,
-        "branch": args.branch,
+        "remote": remote,
+        "branch": branch,
         "path": ".mesh",
         "ignoreGenerated": True,
     })
     save_mesh_config(root, config)
+    return config
+
+
+def cmd_state_configure(args):
+    root = require_mesh_root()
+    configure_state_remote(root, args.remote, branch=args.branch, allow_project_repo=args.allow_project_repo)
     success(f"✅ Configured mesh state sync: {args.remote} ({args.branch})")
 
 
-def cmd_state_clone(args):
+def clone_state_root(remote, target, branch="main"):
     if not git_available():
         die("git is required for mesh state sync.")
-    target = Path(args.target).expanduser().resolve()
     if target.exists() and any(target.iterdir()):
         die(f"Target is not empty: {target}")
     target.parent.mkdir(parents=True, exist_ok=True)
-    clone = subprocess.run(["git", "clone", "--branch", args.branch, args.remote, str(target)], capture_output=True, text=True, timeout=120)
+    clone = subprocess.run(["git", "clone", "--branch", branch, remote, str(target)], capture_output=True, text=True, timeout=120)
     if clone.returncode != 0:
         # Empty remotes often do not have the requested branch yet; retry without --branch.
-        clone = subprocess.run(["git", "clone", args.remote, str(target)], capture_output=True, text=True, timeout=120)
+        clone = subprocess.run(["git", "clone", remote, str(target)], capture_output=True, text=True, timeout=120)
     if clone.returncode != 0:
         die(f"git clone failed: {(clone.stderr or clone.stdout).strip()}")
     ensure_mesh_structure(target)
-    config = load_mesh_config(target)
-    config.setdefault("stateSync", {})
-    config["stateSync"].update({
-        "backend": "git",
-        "remote": args.remote,
-        "branch": args.branch,
-        "path": ".mesh",
-        "ignoreGenerated": True,
-    })
-    save_mesh_config(target, config)
-    ensure_state_git(target, remote=args.remote, branch=args.branch, allow_project_repo=True)
+    configure_state_remote(target, remote, branch=branch, allow_project_repo=True)
+    return target
+
+
+def cmd_state_clone(args):
+    target = Path(args.target).expanduser().resolve()
+    clone_state_root(args.remote, target, branch=args.branch)
     success(f"✅ Cloned mesh state root to {target}")
+    print(f"Set this for agents that run elsewhere: export MESH_ROOT={target}")
+
+
+def tailscale_git_remote(host, repo_path, user=None):
+    if not host or any(ch.isspace() for ch in host):
+        die("Invalid Tailscale host. Use a MagicDNS name or tailnet IP without spaces.")
+    if not repo_path or not repo_path.startswith("/"):
+        die("--repo-path must be an absolute path on the Tailscale SSH host, e.g. /Users/satoshi/agent-mesh-state.git")
+    if user and any(ch.isspace() for ch in user):
+        die("Invalid SSH user. Use a username without spaces.")
+    prefix = f"{user}@{host}" if user else host
+    return f"{prefix}:{repo_path}"
+
+
+def tailscale_setup_hint(remote, repo_path):
+    return (
+        "Remote host one-time setup:\n"
+        f"  mkdir -p {repo_path}\n"
+        f"  git init --bare {repo_path}\n"
+        "Then from each participating machine:\n"
+        f"  mesh state tailscale configure --host <host> --repo-path {repo_path}\n"
+        f"Git remote URL: {remote}"
+    )
+
+
+def cmd_state_tailscale_url(args):
+    remote = tailscale_git_remote(args.host, args.repo_path, user=args.user)
+    print(remote)
+    if args.hint:
+        print("\n" + tailscale_setup_hint(remote, args.repo_path))
+
+
+def cmd_state_tailscale_configure(args):
+    root = require_mesh_root()
+    remote = tailscale_git_remote(args.host, args.repo_path, user=args.user)
+    configure_state_remote(root, remote, branch=args.branch, allow_project_repo=args.allow_project_repo)
+    success(f"✅ Configured Tailscale SSH mesh state sync: {remote} ({args.branch})")
+    if args.hint:
+        print("\n" + tailscale_setup_hint(remote, args.repo_path))
+
+
+def cmd_state_tailscale_clone(args):
+    target = Path(args.target).expanduser().resolve()
+    remote = tailscale_git_remote(args.host, args.repo_path, user=args.user)
+    clone_state_root(remote, target, branch=args.branch)
+    success(f"✅ Cloned Tailscale SSH mesh state root to {target}")
     print(f"Set this for agents that run elsewhere: export MESH_ROOT={target}")
 
 
@@ -2302,6 +2348,32 @@ def build_parser():
     p_state_clone.add_argument("--branch", default="main", help="State branch (default: main)")
     p_state_clone.set_defaults(func=cmd_state_clone)
 
+    p_state_tail = state_sub.add_parser("tailscale", help="Build/configure Tailscale SSH Git remotes for mesh state")
+    tail_sub = p_state_tail.add_subparsers(dest="tailscale_command")
+
+    def add_tail_common(parser):
+        parser.add_argument("--host", required=True, help="Tailscale MagicDNS host or tailnet IP, e.g. macbook.tailnet.ts.net")
+        parser.add_argument("--repo-path", required=True, help="Absolute path to bare state repo on the Tailscale SSH host")
+        parser.add_argument("--user", help="SSH username (omit to use the local SSH default)")
+
+    p_tail_url = tail_sub.add_parser("url", help="Print the Git remote URL for a Tailscale SSH mesh state repo")
+    add_tail_common(p_tail_url)
+    p_tail_url.add_argument("--hint", action="store_true", help="Print one-time remote host setup hints")
+    p_tail_url.set_defaults(func=cmd_state_tailscale_url)
+
+    p_tail_configure = tail_sub.add_parser("configure", help="Configure current mesh root to sync through Tailscale SSH")
+    add_tail_common(p_tail_configure)
+    p_tail_configure.add_argument("--branch", default="main", help="State branch (default: main)")
+    p_tail_configure.add_argument("--hint", action="store_true", help="Print one-time remote host setup hints")
+    p_tail_configure.add_argument("--allow-project-repo", action="store_true", help="Allow using a non-dedicated project Git repo as the state backend")
+    p_tail_configure.set_defaults(func=cmd_state_tailscale_configure)
+
+    p_tail_clone = tail_sub.add_parser("clone", help="Clone a Tailscale SSH mesh state root")
+    add_tail_common(p_tail_clone)
+    p_tail_clone.add_argument("--target", required=True, help="Directory to clone the mesh state root into")
+    p_tail_clone.add_argument("--branch", default="main", help="State branch (default: main)")
+    p_tail_clone.set_defaults(func=cmd_state_tailscale_clone)
+
     p_state_status = state_sub.add_parser("status", help="Show mesh state sync configuration and Git status")
     p_state_status.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     p_state_status.set_defaults(func=cmd_state_status)
@@ -2382,7 +2454,10 @@ def command_requires_lock(args):
     if command == "index":
         return True
     if command == "state":
-        return getattr(args, "state_command", None) in {"configure", "pull", "push", "sync"}
+        state_command = getattr(args, "state_command", None)
+        if state_command == "tailscale":
+            return getattr(args, "tailscale_command", None) == "configure"
+        return state_command in {"configure", "pull", "push", "sync"}
     return False
 
 

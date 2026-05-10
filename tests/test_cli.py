@@ -420,6 +420,30 @@ def test_state_configure_refuses_project_content_by_default():
             shutil.rmtree(remote_parent, ignore_errors=True)
 
 
+def test_state_tailscale_url_and_configure():
+    with case("state tailscale url + configure") as t:
+        expected = "satoshi@macbook.tailnet.ts.net:/Users/satoshi/agent-mesh-state.git"
+        rc, out, _ = run([
+            "state", "tailscale", "url",
+            "--host", "macbook.tailnet.ts.net",
+            "--repo-path", "/Users/satoshi/agent-mesh-state.git",
+            "--user", "satoshi",
+        ], cwd=t.tmpdir)
+        check(rc == 0 and out.strip() == expected, "tailscale url builds scp-style Git remote")
+
+        rc, _, _ = run([
+            "state", "tailscale", "configure",
+            "--host", "macbook.tailnet.ts.net",
+            "--repo-path", "/Users/satoshi/agent-mesh-state.git",
+            "--user", "satoshi",
+        ], cwd=t.tmpdir)
+        check(rc == 0, "tailscale configure succeeds without network access")
+
+        rc, out, _ = run(["state", "status", "--json"], cwd=t.tmpdir)
+        data = json.loads(out)
+        check(rc == 0 and data["remote"] == expected, "tailscale remote stored in state config")
+
+
 def test_evolution_log():
     with case("evolution log + read") as t:
         rc, _, _ = run(["evolution", "log", "--agent", "hermes", "--file", "AGENTS.md", "--category", "sop", "--summary", "Added mesh workflow"], cwd=t.tmpdir)
@@ -507,6 +531,7 @@ if __name__ == "__main__":
         test_mesh_root_env,
         test_state_sync_between_two_roots,
         test_state_configure_refuses_project_content_by_default,
+        test_state_tailscale_url_and_configure,
         test_evolution_log,
         test_evolution_multiple_entries,
         test_evolution_sync,

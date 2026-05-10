@@ -88,6 +88,32 @@ export MESH_ROOT=~/agent-mesh-state
 mesh state sync
 ```
 
+For a fully private tailnet path, put the bare Git state repo on one Tailscale SSH host:
+
+```bash
+# On the Mac / always-on host, one time:
+mkdir -p /Users/satoshi/agent-mesh-state.git
+git init --bare /Users/satoshi/agent-mesh-state.git
+
+# On WSL / another machine:
+mkdir -p ~/agent-mesh-state
+cd ~/agent-mesh-state
+mesh init
+mesh state tailscale configure \
+  --host macbook.tailnet.ts.net \
+  --user satoshi \
+  --repo-path /Users/satoshi/agent-mesh-state.git
+mesh state push --message "initial mesh state"
+
+# On another device:
+mesh state tailscale clone \
+  --host macbook.tailnet.ts.net \
+  --user satoshi \
+  --repo-path /Users/satoshi/agent-mesh-state.git \
+  --target ~/agent-mesh-state
+export MESH_ROOT=~/agent-mesh-state
+```
+
 Recommended agent loop:
 
 ```bash
@@ -203,6 +229,7 @@ CI runs the same core checks: `python3 scripts/verify_suite.py`, `python3 script
 | `mesh sync [--repo]` | Sync PR status from GitHub |
 | `mesh state configure` | Configure a private Git backend for cross-device mesh state |
 | `mesh state clone` | Clone a shared mesh state root and print `MESH_ROOT` setup |
+| `mesh state tailscale url|configure|clone` | Use a Tailscale SSH host as the private Git state backend |
 | `mesh state pull` | Pull/rebase remote mesh state |
 | `mesh state push` | Commit and push local mesh state |
 | `mesh state sync` | Commit local state, pull/rebase, rebuild indexes, and push |

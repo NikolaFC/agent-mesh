@@ -86,6 +86,32 @@ export MESH_ROOT=~/agent-mesh-state
 mesh state sync
 ```
 
+如果想完全走自己的 tailnet，可以把 bare Git 状态仓库放在一台 Tailscale SSH 主机上：
+
+```bash
+# Mac / 常在线主机，一次性执行：
+mkdir -p /Users/satoshi/agent-mesh-state.git
+git init --bare /Users/satoshi/agent-mesh-state.git
+
+# WSL / 另一台机器：
+mkdir -p ~/agent-mesh-state
+cd ~/agent-mesh-state
+mesh init
+mesh state tailscale configure \
+  --host macbook.tailnet.ts.net \
+  --user satoshi \
+  --repo-path /Users/satoshi/agent-mesh-state.git
+mesh state push --message "initial mesh state"
+
+# 再接入另一台设备：
+mesh state tailscale clone \
+  --host macbook.tailnet.ts.net \
+  --user satoshi \
+  --repo-path /Users/satoshi/agent-mesh-state.git \
+  --target ~/agent-mesh-state
+export MESH_ROOT=~/agent-mesh-state
+```
+
 推荐 Agent 工作循环：
 
 ```bash
@@ -203,6 +229,7 @@ CI 跑同一组核心检查：`python3 scripts/verify_suite.py`、`python3 scrip
 | `mesh sync [--repo]` | 从 GitHub 同步 PR 状态 |
 | `mesh state configure` | 配置跨设备 mesh state 的私有 Git 后端 |
 | `mesh state clone` | 克隆共享 mesh state root，并输出 `MESH_ROOT` 设置方式 |
+| `mesh state tailscale url|configure|clone` | 使用 Tailscale SSH 主机作为私有 Git state backend |
 | `mesh state pull` | 拉取/rebase 远端 mesh state |
 | `mesh state push` | 提交并推送本地 mesh state |
 | `mesh state sync` | 提交本地状态、拉取/rebase、重建索引并推送 |
