@@ -196,6 +196,24 @@ Routing rules:
 
 `mesh validate` and `mesh doctor` may emit non-fatal boundary warnings when memory/status files accumulate obvious SOP material or SOP files look mostly like one-off state. Warnings are advisory and never auto-move content.
 
+## Experimental Optional Layer: Mesh MCP
+
+Agent Mesh core remains file-only. The optional `mesh mcp` surface is experimental and provides MCP/client tooling over the same local state. The first supported sharing pair is deliberately limited to OpenClaw ↔ Hermes (`openclaw` / `hermes`).
+
+Experimental storage lives under `.mesh/mcp/`:
+
+```text
+.mesh/mcp/sessions/      # transcript descriptors
+.mesh/mcp/requests/      # cross-agent read approval requests
+.mesh/mcp/grants/        # allow-once / scoped allow-session grants
+.mesh/mcp/servers.json   # downstream MCP server registry
+.mesh/mcp/audit.jsonl    # access and proxy audit events
+```
+
+Cross-agent full transcript reads are allowed only after an explicit grant. Same-agent transcript reads do not need a cross-agent grant. `allow-once` grants are consumed after one read; `allow-session` grants are scoped to the requester, target session, and current session when provided. This experimental transcript/context surface rejects unsupported agents rather than becoming a general raw-session bus.
+
+This layer is intentionally not part of the stable core protocol yet. See `docs/mesh-mcp-experimental-construction.md` for the current construction contract and division of labor with OpenClaw/Hermes MCP.
+
 ## Write Guarantees
 
 The CLI serializes mutating operations with a local `.mesh/.lock` on POSIX platforms and writes files through same-directory temporary files followed by atomic replacement. This prevents partial JSON/Markdown writes and reduces lost-update risk when multiple terminals share one local mesh root.

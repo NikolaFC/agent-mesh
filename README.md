@@ -149,6 +149,25 @@ mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspa
 
 The `openclaw-persona` preset includes core startup/persona files such as `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`; optional stable `memory/` content via `--include-memory`; and optional `skills/` + `agents/` content via `--include-skills`. It excludes secrets, credentials, device pairing state, `.env`, logs, runtime state, raw session/dream archives, and common key/cert files by default. `apply` is dry-run unless `--write` is passed and backs up overwritten files under `.mesh/migrate/backups/`.
 
+## Experimental Mesh MCP interface
+
+Agent Mesh has an optional experimental MCP interface for controlled cross-agent context access. It is not part of the core file protocol and Agent Mesh still has no required runtime server.
+
+Current scope is deliberately narrow: the shared transcript/context tools only support **OpenClaw ↔ Hermes** (`openclaw` and `hermes`). Other agents can still use core Agent Mesh files, but this experimental MCP sharing surface rejects non-OpenClaw/Hermes transcript sessions for now.
+
+The intended workflow is: register an OpenClaw or Hermes transcript session, request approval before cross-agent reads, then generate bounded context packs for bug repair or handoff:
+
+```bash
+mesh mcp session register --agent hermes --session-id bug-123 --transcript /path/to/hermes.log
+mesh mcp access request --requesting-agent openclaw --target-session hermes:bug-123 --reason "handoff"
+mesh mcp access decide --id <request-id> --decision allow-once --by satoshi
+mesh mcp transcript read --requesting-agent openclaw --target-session hermes:bug-123 --mode full
+mesh mcp context pack --requesting-agent openclaw --target-session hermes:bug-123 --token-budget 4000
+mesh mcp serve
+```
+
+The approval gate supports `allow-once`, scoped `allow-session`, and `deny`. Full transcript reads are local-first and audited under `.mesh/mcp/audit.jsonl`; `read` does not mean automatic prompt injection. See [`docs/mesh-mcp-experimental-construction.md`](docs/mesh-mcp-experimental-construction.md).
+
 ## Remote QMD retrieval
 
 A client device can query the canonical host's local QMD index without copying vector data or running a public service:

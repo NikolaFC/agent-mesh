@@ -147,6 +147,25 @@ mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspa
 
 `openclaw-persona` preset 会包含 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`USER.md`、`MEMORY.md` 等核心启动/人格文件；可通过 `--include-memory` 包含稳定 `memory/` 内容；也可通过 `--include-skills` 包含 `skills/` + `agents/` 内容。默认排除 secrets、credentials、device pairing state、`.env`、logs、runtime state、raw session/dream archives 和常见 key/cert 文件。`apply` 默认只 dry-run，只有传 `--write` 才写入，并会把被覆盖文件备份到 `.mesh/migrate/backups/`。
 
+## 实验性 Mesh MCP 接口
+
+Agent Mesh 现在有一个可选的实验性 MCP 接口，用于可控地读取跨 agent 上下文。它不属于 core 文件协议，Agent Mesh 仍然不强制依赖常驻服务。
+
+当前范围刻意收窄：共享 transcript/context 工具只支持 **OpenClaw ↔ Hermes**（`openclaw` 和 `hermes`）。其他 agent 仍可使用 Agent Mesh core 文件协议，但这个实验性 MCP 共享面暂时会拒绝非 OpenClaw/Hermes 的 transcript session。
+
+典型流程是：注册 OpenClaw 或 Hermes transcript session，跨 agent 读取前申请批准，然后生成 bounded context pack 用于修 bug 或交接：
+
+```bash
+mesh mcp session register --agent hermes --session-id bug-123 --transcript /path/to/hermes.log
+mesh mcp access request --requesting-agent openclaw --target-session hermes:bug-123 --reason "handoff"
+mesh mcp access decide --id <request-id> --decision allow-once --by satoshi
+mesh mcp transcript read --requesting-agent openclaw --target-session hermes:bug-123 --mode full
+mesh mcp context pack --requesting-agent openclaw --target-session hermes:bug-123 --token-budget 4000
+mesh mcp serve
+```
+
+批准闸门支持 `allow-once`、限定范围的 `allow-session` 和 `deny`。完整 transcript 读取默认 local-first，并写入 `.mesh/mcp/audit.jsonl`；`read` 不等于自动注入 prompt。施工文档见 [`docs/mesh-mcp-experimental-construction.md`](docs/mesh-mcp-experimental-construction.md)。
+
 ## 远程 QMD 检索
 
 client 设备可以直接查询 canonical host 的本地 QMD index，不复制向量库，也不开放公网服务：

@@ -31,6 +31,32 @@ def run(args, cwd=None, expect_rc=0):
     return r.returncode, r.stdout, r.stderr
 
 
+def mcp_frame(message):
+    payload = json.dumps(message).encode("utf-8")
+    return f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii") + payload
+
+
+def parse_mcp_frames(blob):
+    frames = []
+    pos = 0
+    while pos < len(blob):
+        marker = blob.find(b"\r\n\r\n", pos)
+        if marker < 0:
+            break
+        header = blob[pos:marker].decode("ascii")
+        length = None
+        for line in header.splitlines():
+            if line.lower().startswith("content-length:"):
+                length = int(line.split(":", 1)[1].strip())
+        if length is None:
+            break
+        start = marker + 4
+        end = start + length
+        frames.append(json.loads(blob[start:end].decode("utf-8")))
+        pos = end
+    return frames
+
+
 def case(name):
     """Test context manager."""
     class Ctx:
@@ -624,6 +650,210 @@ def test_schema_validation():
         check(rc == 1, "validate rejects bad data")
 
 
+def test_mcp_access_gate_and_context_pack():
+    with case("experimental mcp access gate + context pack") as t:
+        transcript = Path(t.tmpdir) / "hermes.log"
+        transcript.write_text("user: fix the failing test\nhermes: root cause is CACHE-42\nhermes: final patch touched cli/mesh\n")
+        rc, out, _ = run([
+            "mcp", "session", "register",
+            "--agent", "hermes",
+            "--session-id", "bug-42",
+            "--title", "Bug 42",
+            "--transcript", str(transcript),
+            "--json",
+        ], cwd=t.tmpdir)
+        session = json.loads(out)
+        check(rc == 0 and session["key"] == "hermes:bug-42", "session register returns key")
+
+        rc, _, err = run([
+            "mcp", "session", "register",
+            "--agent", "coder-pro",
+            "--session-id", "bug-42",
+            "--transcript", str(transcript),
+        ], cwd=t.tmpdir, expect_rc=1)
+        check(rc == 1 and "OpenClaw/Hermes" in err, "unsupported shared MCP agent is rejected")
+
+        rc, _, _ = run([
+            "mcp", "transcript", "read",
+            "--requesting-agent", "openclaw",
+            "--target-session", "hermes:bug-42",
+            "--mode", "full",
+        ], cwd=t.tmpdir, expect_rc=1)
+        check(rc == 1, "cross-agent read is gated before approval")
+
+        rc, out, _ = run([
+            "mcp", "access", "request",
+            "--requesting-agent", "openclaw",
+            "--target-session", "hermes:bug-42",
+            "--current-session", "main-1",
+            "--reason", "handoff",
+            "--json",
+        ], cwd=t.tmpdir)
+        req = json.loads(out)
+        check(rc == 0 and req["status"] == "pending", "access request created")
+
+        rc, _, err = run([
+            "mcp", "access", "request",
+            "--requesting-agent", "coder-pro",
+            "--target-session", "hermes:bug-42",
+            "--reason", "unsupported requester",
+        ], cwd=t.tmpdir, expect_rc=1)
+        check(rc == 1 and "OpenClaw/Hermes" in err, "unsupported shared MCP requester is rejected")
+
+        rc, _, _ = run([
+            "mcp", "access", "decide",
+            "--id", req["id"],
+            "--decision", "allow-once",
+            "--by", "satoshi",
+            "--json",
+        ], cwd=t.tmpdir)
+        check(rc == 0, "allow-once decision succeeds")
+
+        rc, out, _ = run([
+            "mcp", "transcript", "read",
+            "--requesting-agent", "openclaw",
+            "--target-session", "hermes:bug-42",
+            "--mode", "full",
+            "--json",
+        ], cwd=t.tmpdir)
+        read_result = json.loads(out)
+        check(rc == 0 and "CACHE-42" in read_result["content"], "approved read returns full transcript")
+
+        rc, _, _ = run([
+            "mcp", "transcript", "read",
+            "--requesting-agent", "openclaw",
+            "--target-session", "hermes:bug-42",
+        ], cwd=t.tmpdir, expect_rc=1)
+        check(rc == 1, "allow-once grant is consumed")
+
+        rc, out, _ = run([
+            "mcp", "access", "request",
+            "--requesting-agent", "openclaw",
+            "--target-session", "hermes:bug-42",
+            "--current-session", "main-1",
+            "--reason", "handoff session",
+            "--json",
+        ], cwd=t.tmpdir)
+        req2 = json.loads(out)
+        run([
+            "mcp", "access", "decide",
+            "--id", req2["id"],
+            "--decision", "allow-session",
+            "--current-session", "main-1",
+            "--by", "satoshi",
+        ], cwd=t.tmpdir)
+        rc, out, _ = run([
+            "mcp", "context", "pack",
+            "--requesting-agent", "openclaw",
+            "--target-session", "hermes:bug-42",
+            "--current-session", "main-1",
+            "--token-budget", "1000",
+            "--json",
+        ], cwd=t.tmpdir)
+        pack = json.loads(out)
+        check(rc == 0 and "Mesh Context Pack" in pack["pack"] and "CACHE-42" in pack["pack"], "context pack uses approved session grant")
+
+        openclaw_jsonl = Path(t.tmpdir) / "openclaw.jsonl"
+        openclaw_jsonl.write_text(
+            json.dumps({"message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "", "thinkingSignature": "FAKE-ENCRYPTED-SIGNATURE"}]}}) + "\n" +
+            json.dumps({"message": {"role": "assistant", "content": [{"type": "text", "text": "handoff: SAFE-CONTEXT"}]}}) + "\n"
+        )
+        rc, _, _ = run([
+            "mcp", "session", "register",
+            "--agent", "openclaw",
+            "--session-id", "jsonl-1",
+            "--transcript", str(openclaw_jsonl),
+            "--format", "jsonl",
+        ], cwd=t.tmpdir)
+        check(rc == 0, "openclaw JSONL session register succeeds")
+        rc, out, _ = run([
+            "mcp", "transcript", "read",
+            "--requesting-agent", "openclaw",
+            "--target-session", "openclaw:jsonl-1",
+            "--json",
+        ], cwd=t.tmpdir)
+        jsonl_read = json.loads(out)
+        check(rc == 0 and "SAFE-CONTEXT" in jsonl_read["content"] and "FAKE-ENCRYPTED-SIGNATURE" not in jsonl_read["content"], "openclaw JSONL extraction drops encrypted signatures")
+
+        audit = Path(t.tmpdir) / ".mesh" / "mcp" / "audit.jsonl"
+        check(audit.exists() and "transcript_read" in audit.read_text(), "audit log records transcript reads")
+
+
+def test_mcp_server_registry_and_stdio_proxy():
+    with case("experimental mcp downstream stdio registry/proxy") as t:
+        fake = Path(t.tmpdir) / "fake_mcp.py"
+        fake.write_text("""
+import json, sys
+
+def frame(obj):
+    data=json.dumps(obj).encode()
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\\r\\n\\r\\n".encode()+data)
+    sys.stdout.buffer.flush()
+
+def read():
+    header=b""
+    while b"\\r\\n\\r\\n" not in header:
+        ch=sys.stdin.buffer.read(1)
+        if not ch:
+            return None
+        header += ch
+    h, rest = header.split(b"\\r\\n\\r\\n",1)
+    n=0
+    for line in h.decode().splitlines():
+        if line.lower().startswith("content-length:"):
+            n=int(line.split(":",1)[1].strip())
+    body=rest+sys.stdin.buffer.read(n-len(rest))
+    return json.loads(body[:n].decode())
+
+while True:
+    msg=read()
+    if msg is None:
+        break
+    method=msg.get("method")
+    if method == "initialize":
+        frame({"jsonrpc":"2.0","id":msg.get("id"),"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"fake","version":"1"}}})
+    elif method == "notifications/initialized":
+        pass
+    elif method == "tools/list":
+        frame({"jsonrpc":"2.0","id":msg.get("id"),"result":{"tools":[{"name":"echo","description":"echo text","inputSchema":{"type":"object"}}]}})
+    elif method == "tools/call":
+        args=(msg.get("params") or {}).get("arguments") or {}
+        frame({"jsonrpc":"2.0","id":msg.get("id"),"result":{"content":[{"type":"text","text":args.get("text","")}]}})
+""")
+        definition = json.dumps({"command": sys.executable, "args": [str(fake)]})
+        rc, _, _ = run(["mcp", "server", "set", "echo", definition], cwd=t.tmpdir)
+        check(rc == 0, "downstream MCP server set succeeds")
+        rc, out, _ = run(["mcp", "server", "list"], cwd=t.tmpdir)
+        check(rc == 0 and "echo" in out, "downstream MCP server list shows echo")
+        rc, out, _ = run(["mcp", "tools", "list", "--server", "echo", "--json"], cwd=t.tmpdir)
+        tools = json.loads(out)
+        check(rc == 0 and tools["tools"][0]["name"] == "echo", "downstream tools/list works")
+        rc, out, _ = run(["mcp", "call", "--server", "echo", "--tool", "echo", "--input", '{"text":"hello"}', "--json"], cwd=t.tmpdir)
+        result = json.loads(out)
+        check(rc == 0 and result["content"][0]["text"] == "hello", "downstream tools/call works")
+
+
+def test_mcp_serve_lists_experimental_tools():
+    with case("experimental mcp stdio server lists tools") as t:
+        payload = b"".join([
+            mcp_frame({"jsonrpc":"2.0","id":"init","method":"initialize","params":{}}),
+            mcp_frame({"jsonrpc":"2.0","id":"tools","method":"tools/list","params":{}}),
+        ])
+        proc = subprocess.run(
+            [sys.executable, MESH, "mcp", "serve"],
+            input=payload,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            cwd=t.tmpdir,
+        )
+        frames = parse_mcp_frames(proc.stdout)
+        tool_frame = [f for f in frames if f.get("id") == "tools"][0]
+        names = {tool["name"] for tool in tool_frame["result"]["tools"]}
+        check(proc.returncode == 0, "mcp serve exits cleanly on EOF")
+        check("mesh_transcript_read" in names and "mesh_context_pack" in names, "mcp serve exposes context tools")
+
+
 # ── Runner ─────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -662,6 +892,9 @@ if __name__ == "__main__":
         test_evolution_log,
         test_evolution_multiple_entries,
         test_evolution_sync,
+        test_mcp_access_gate_and_context_pack,
+        test_mcp_server_registry_and_stdio_proxy,
+        test_mcp_serve_lists_experimental_tools,
         test_schema_validation,
     ]
 

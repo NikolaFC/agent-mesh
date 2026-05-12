@@ -16,6 +16,8 @@ from pathlib import Path
 VERSION = "0.3.0"
 PULSE_SCHEMA_ID = "agent-mesh/pulse/v1"
 TASK_SCHEMA_ID = "agent-mesh/task/v1"
+MCP_SHARED_AGENT_ALLOWLIST = {"openclaw", "hermes"}
+MCP_SHARED_AGENT_ALLOWLIST_TEXT = "openclaw, hermes"
 
 PULSE_STATUS = {"idle", "working", "blocked", "reviewing", "done"}
 PULSE_ACTIONS = {
@@ -162,6 +164,433 @@ def mesh_paths(root):
         "historical": mesh / "shared" / "historical",
         "evolution": mesh / "shared" / "evolution",
     }
+
+
+def mcp_paths(root):
+    mcp = root / ".mesh" / "mcp"
+    return {
+        "mcp": mcp,
+        "sessions": mcp / "sessions",
+        "requests": mcp / "requests",
+        "grants": mcp / "grants",
+        "servers": mcp / "servers.json",
+        "audit": mcp / "audit.jsonl",
+    }
+
+
+def ensure_mcp_structure(root):
+    paths = mcp_paths(root)
+    for key in ("mcp", "sessions", "requests", "grants"):
+        paths[key].mkdir(parents=True, exist_ok=True)
+    if not paths["servers"].exists():
+        write_json(paths["servers"], {"schema": "agent-mesh/mcp-servers/v1", "servers": {}})
+
+
+def safe_storage_id(value):
+    text = str(value or "")
+    slug = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", text).strip("-._:")[:80]
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    return f"{slug or 'item'}-{digest}"
+
+
+def mcp_session_key(agent, session_id):
+    return f"{agent}:{session_id}"
+
+
+def parse_mcp_session_key(key):
+    if ":" not in key:
+        return None, key
+    agent, session_id = key.split(":", 1)
+    return agent, session_id
+
+
+def is_mcp_shared_agent_supported(agent):
+    return str(agent or "").strip().lower() in MCP_SHARED_AGENT_ALLOWLIST
+
+
+def normalize_mcp_shared_agent(agent, label="agent"):
+    value = str(agent or "").strip().lower()
+    if not value:
+        die(f"{label} is required")
+    if not re.fullmatch(r"[a-z0-9-]+", value):
+        die(f"{label} must be lowercase alphanumeric plus hyphen")
+    if value not in MCP_SHARED_AGENT_ALLOWLIST:
+        die(
+            "Experimental shared MCP currently supports only OpenClaw/Hermes "
+            f"agents ({MCP_SHARED_AGENT_ALLOWLIST_TEXT}); got {agent!r}"
+        )
+    return value
+
+
+def is_mcp_shared_session_supported(session):
+    agent = session.get("agent") if isinstance(session, dict) else None
+    if not agent and isinstance(session, dict):
+        agent = parse_mcp_session_key(session.get("key", ""))[0]
+    return is_mcp_shared_agent_supported(agent)
+
+
+def mcp_session_path(root, key):
+    return mcp_paths(root)["sessions"] / f"{safe_storage_id(key)}.json"
+
+
+def load_mcp_sessions(root):
+    sessions_dir = mcp_paths(root)["sessions"]
+    if not sessions_dir.exists():
+        return []
+    sessions = []
+    for path in sorted(sessions_dir.glob("*.json")):
+        try:
+            data = read_json(path)
+            data["_path"] = str(path)
+            sessions.append(data)
+        except SystemExit:
+            raise
+        except Exception:
+            continue
+    return sessions
+
+
+def find_mcp_session(root, key):
+    direct = mcp_session_path(root, key)
+    if direct.exists():
+        return read_json(direct)
+    for item in load_mcp_sessions(root):
+        if item.get("key") == key:
+            return item
+    die(f"Unknown MCP session: {key}")
+
+
+def append_mcp_audit(root, event):
+    ensure_mcp_structure(root)
+    event = {"at": now_iso(), **event}
+    audit_path = mcp_paths(root)["audit"]
+    append_text(audit_path, json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def load_mcp_servers(root):
+    ensure_mcp_structure(root)
+    path = mcp_paths(root)["servers"]
+    data = read_json(path)
+    if "servers" not in data or not isinstance(data["servers"], dict):
+        data = {"schema": "agent-mesh/mcp-servers/v1", "servers": {}}
+    return data
+
+
+def write_mcp_servers(root, data):
+    ensure_mcp_structure(root)
+    data.setdefault("schema", "agent-mesh/mcp-servers/v1")
+    data.setdefault("servers", {})
+    write_json(mcp_paths(root)["servers"], data)
+
+
+def mcp_request_path(root, request_id):
+    return mcp_paths(root)["requests"] / f"{safe_storage_id(request_id)}.json"
+
+
+def mcp_grant_path(root, grant_id):
+    return mcp_paths(root)["grants"] / f"{safe_storage_id(grant_id)}.json"
+
+
+def create_mcp_access_request(root, requesting_agent, target_session, reason, scope="full", current_session=None):
+    ensure_mcp_structure(root)
+    requesting_agent = normalize_mcp_shared_agent(requesting_agent, "--requesting-agent")
+    if not target_session:
+        die("--target-session is required")
+    session = find_mcp_session(root, target_session)
+    target_agent = session.get("agent") or parse_mcp_session_key(target_session)[0]
+    normalize_mcp_shared_agent(target_agent, "target session agent")
+    request_id = safe_storage_id(f"{now_iso()}:{requesting_agent}:{target_session}:{reason}")
+    data = {
+        "schema": "agent-mesh/mcp-access-request/v1",
+        "id": request_id,
+        "status": "pending",
+        "requestingAgent": requesting_agent,
+        "currentSession": current_session,
+        "targetSession": target_session,
+        "scope": scope,
+        "reason": reason or "unspecified",
+        "createdAt": now_iso(),
+        "updatedAt": now_iso(),
+    }
+    write_json(mcp_request_path(root, request_id), data)
+    append_mcp_audit(root, {
+        "event": "access_requested",
+        "requestId": request_id,
+        "requestingAgent": requesting_agent,
+        "targetSession": target_session,
+        "scope": scope,
+        "reason": reason or "unspecified",
+    })
+    return data
+
+
+def load_mcp_request(root, request_id):
+    path = mcp_request_path(root, request_id)
+    if path.exists():
+        return read_json(path), path
+    req_dir = mcp_paths(root)["requests"]
+    if req_dir.exists():
+        for path in req_dir.glob("*.json"):
+            data = read_json(path)
+            if data.get("id") == request_id:
+                return data, path
+    die(f"Unknown MCP access request: {request_id}")
+
+
+def decide_mcp_access_request(root, request_id, decision, decided_by, current_session=None):
+    ensure_mcp_structure(root)
+    if decision not in {"allow-once", "allow-session", "deny"}:
+        die("Decision must be allow-once, allow-session, or deny")
+    request, path = load_mcp_request(root, request_id)
+    request["decision"] = decision
+    request["decidedBy"] = decided_by or "unknown"
+    request["decidedAt"] = now_iso()
+    request["updatedAt"] = now_iso()
+    grant = None
+    if decision == "deny":
+        request["status"] = "denied"
+    else:
+        request["status"] = "allowed"
+        grant_id = safe_storage_id(f"grant:{request_id}:{decision}:{now_iso()}")
+        grant = {
+            "schema": "agent-mesh/mcp-access-grant/v1",
+            "id": grant_id,
+            "status": "active",
+            "grantType": decision,
+            "requestId": request_id,
+            "requestingAgent": request.get("requestingAgent"),
+            "currentSession": current_session if decision == "allow-session" else request.get("currentSession"),
+            "targetSession": request.get("targetSession"),
+            "scope": request.get("scope", "full"),
+            "remainingReads": 1 if decision == "allow-once" else None,
+            "createdAt": now_iso(),
+            "createdBy": decided_by or "unknown",
+        }
+        write_json(mcp_grant_path(root, grant_id), grant)
+        request["grantId"] = grant_id
+    write_json(path, request)
+    append_mcp_audit(root, {
+        "event": "access_decided",
+        "requestId": request_id,
+        "decision": decision,
+        "decidedBy": decided_by or "unknown",
+        "grantId": grant.get("id") if grant else None,
+    })
+    return {"request": request, "grant": grant}
+
+
+def find_active_mcp_grant(root, requesting_agent, target_session, current_session=None):
+    grants_dir = mcp_paths(root)["grants"]
+    if not grants_dir.exists():
+        return None, None
+    for path in sorted(grants_dir.glob("*.json")):
+        data = read_json(path)
+        if data.get("status") != "active":
+            continue
+        if data.get("requestingAgent") != requesting_agent:
+            continue
+        if data.get("targetSession") != target_session:
+            continue
+        grant_type = data.get("grantType")
+        if grant_type == "allow-once":
+            if data.get("remainingReads", 0) and data.get("remainingReads", 0) > 0:
+                return data, path
+        elif grant_type == "allow-session":
+            grant_session = data.get("currentSession")
+            if not grant_session or not current_session or grant_session == current_session:
+                return data, path
+    return None, None
+
+
+def consume_mcp_grant_if_needed(grant, path):
+    if not grant or not path:
+        return
+    if grant.get("grantType") == "allow-once":
+        remaining = int(grant.get("remainingReads") or 0) - 1
+        grant["remainingReads"] = max(0, remaining)
+        if grant["remainingReads"] <= 0:
+            grant["status"] = "consumed"
+            grant["consumedAt"] = now_iso()
+        grant["updatedAt"] = now_iso()
+        write_json(path, grant)
+
+
+def extract_transcript_block_text(block):
+    if block is None:
+        return ""
+    if isinstance(block, str):
+        return block
+    if isinstance(block, list):
+        return "\n".join(part for part in (extract_transcript_block_text(item) for item in block) if part)
+    if not isinstance(block, dict):
+        return str(block)
+    btype = block.get("type")
+    if isinstance(block.get("text"), str):
+        return block["text"]
+    if isinstance(block.get("thinking"), str) and block["thinking"].strip():
+        return f"[thinking] {block['thinking']}"
+    if btype == "toolCall" or "arguments" in block:
+        name = block.get("name") or block.get("toolName") or "tool"
+        args = block.get("arguments")
+        if args is None:
+            return f"[toolCall] {name}"
+        if not isinstance(args, str):
+            args = json.dumps(args, ensure_ascii=False)
+        return f"[toolCall] {name}: {args}"
+    if btype == "toolResult" or "toolName" in block:
+        name = block.get("toolName") or block.get("name") or "tool"
+        content = extract_transcript_block_text(block.get("content"))
+        return f"[toolResult] {name}: {content}" if content else f"[toolResult] {name}"
+    if "content" in block:
+        return extract_transcript_block_text(block.get("content"))
+    # Do not dump unknown blocks wholesale: OpenClaw/Codex transcript blocks may
+    # contain encrypted reasoning signatures. Those are not useful handoff text.
+    return ""
+
+
+def extract_transcript_entry_text(item):
+    if not isinstance(item, dict):
+        return str(item)
+    if isinstance(item.get("message"), dict):
+        msg = item["message"]
+        role = msg.get("role") or item.get("role") or item.get("type") or "entry"
+        body = extract_transcript_block_text(msg.get("content"))
+        return f"{role}: {body}" if body else ""
+    role = item.get("role") or item.get("customType") or item.get("type") or "entry"
+    body = extract_transcript_block_text(item.get("content")) or extract_transcript_block_text(item.get("text"))
+    if body:
+        return f"{role}: {body}"
+    return ""
+
+
+def compact_transcript_for_budget(text, token_budget):
+    # Context packs should be useful handoff material, not a random slice through
+    # one giant tool payload. Keep the latest lines but first cap pathological
+    # lines so a single JSON/tool result cannot consume the whole budget.
+    char_budget = max(500, int(token_budget) * 4)
+    max_entry = max(500, min(2500, char_budget // 3))
+    entries = text.split("\n\n") if "\n\n" in text else text.splitlines()
+    compacted = []
+    for entry in entries:
+        if len(entry) > max_entry:
+            head = max_entry // 2
+            tail = max_entry - head
+            entry = f"{entry[:head]} …[truncated {len(entry) - max_entry} chars]… {entry[-tail:]}"
+        compacted.append(entry)
+    selected = []
+    total = 0
+    for entry in reversed(compacted):
+        extra = len(entry) + (2 if selected else 0)
+        if selected and total + extra > char_budget:
+            break
+        if not selected and extra > char_budget:
+            entry = entry[-char_budget:]
+            extra = len(entry)
+        selected.append(entry)
+        total += extra
+    selected.reverse()
+    out = "\n\n".join(selected)
+    if len(compacted) > len(selected):
+        out = "[earlier transcript omitted to fit context budget]\n" + out
+    return out
+
+
+def read_transcript_content(session, mode="full", limit=None, token_budget=None):
+    transcript_path = Path(session.get("transcriptPath", "")).expanduser()
+    if not transcript_path.is_absolute():
+        transcript_path = (Path(os.getcwd()) / transcript_path).resolve()
+    if not transcript_path.exists():
+        die(f"Transcript path does not exist: {transcript_path}")
+    text = read_text(transcript_path)
+    fmt = session.get("transcriptFormat", "text")
+    if fmt == "jsonl":
+        lines = []
+        for raw in text.splitlines():
+            if not raw.strip():
+                continue
+            try:
+                item = json.loads(raw)
+                line = extract_transcript_entry_text(item)
+                if line:
+                    lines.append(line)
+            except json.JSONDecodeError:
+                lines.append(raw)
+        text = "\n\n".join(lines)
+    if mode == "recent":
+        n = int(limit or 80)
+        text = "\n".join(text.splitlines()[-n:])
+    elif mode == "summary":
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        head = lines[:12]
+        tail = lines[-12:] if len(lines) > 12 else []
+        text = "\n".join(head + (["..."] if tail and head != tail else []) + tail)
+    if token_budget:
+        text = compact_transcript_for_budget(text, token_budget)
+    return text
+
+
+def read_mcp_transcript_authorized(root, requesting_agent, target_session, mode="full", current_session=None, reason=None, limit=None, token_budget=None, auto_request=False):
+    requesting_agent = normalize_mcp_shared_agent(requesting_agent, "requestingAgent")
+    session = find_mcp_session(root, target_session)
+    target_agent = session.get("agent") or parse_mcp_session_key(target_session)[0]
+    target_agent = normalize_mcp_shared_agent(target_agent, "target session agent")
+    grant = grant_path = None
+    if target_agent and requesting_agent != target_agent:
+        grant, grant_path = find_active_mcp_grant(root, requesting_agent, target_session, current_session)
+        if not grant:
+            if auto_request:
+                req = create_mcp_access_request(root, requesting_agent, target_session, reason or "cross-agent transcript read", mode, current_session)
+                return {"requiresApproval": True, "requestId": req["id"], "targetSession": target_session}
+            die(f"Cross-agent transcript read requires approval for {requesting_agent} -> {target_session}")
+    content = read_transcript_content(session, mode=mode, limit=limit, token_budget=token_budget)
+    consume_mcp_grant_if_needed(grant, grant_path)
+    append_mcp_audit(root, {
+        "event": "transcript_read",
+        "requestingAgent": requesting_agent,
+        "targetSession": target_session,
+        "targetAgent": target_agent,
+        "mode": mode,
+        "currentSession": current_session,
+        "reason": reason,
+        "grantId": grant.get("id") if grant else None,
+        "chars": len(content),
+    })
+    return {"requiresApproval": False, "session": session, "content": content, "chars": len(content)}
+
+
+def make_mcp_context_pack(root, requesting_agent, target_session, current_session=None, token_budget=4000, reason=None, auto_request=False):
+    result = read_mcp_transcript_authorized(
+        root,
+        requesting_agent=requesting_agent,
+        target_session=target_session,
+        mode="full",
+        current_session=current_session,
+        reason=reason or "context pack",
+        token_budget=token_budget,
+        auto_request=auto_request,
+    )
+    if result.get("requiresApproval"):
+        return result
+    session = result["session"]
+    content = result["content"]
+    pack = (
+        f"# Mesh Context Pack\n\n"
+        f"Source session: {session.get('key')}\n"
+        f"Source agent: {session.get('agent')}\n"
+        f"Title: {session.get('title') or ''}\n"
+        f"Generated: {now_iso()}\n"
+        f"Reason: {reason or 'context handoff'}\n\n"
+        f"## Transcript\n\n{content}\n"
+    )
+    return {"requiresApproval": False, "pack": pack, "chars": len(pack), "session": session}
+
+
+def mcp_tool_text(payload):
+    if isinstance(payload, str):
+        text = payload
+    else:
+        text = json.dumps(payload, ensure_ascii=False, indent=2)
+    return {"content": [{"type": "text", "text": text}]}
 
 
 def ensure_mesh_structure(base):
@@ -2531,6 +2960,416 @@ def build_qmd_remote_command(args):
     return {"target": target, "workspace": workspace, "script": script, "remoteCommand": remote_cmd, "sshCommand": ssh_cmd}
 
 
+def cmd_mcp_session_register(args):
+    root = require_mesh_root()
+    ensure_mcp_structure(root)
+    transcript = Path(args.transcript).expanduser()
+    if not transcript.is_absolute():
+        transcript = (Path(os.getcwd()) / transcript).resolve()
+    if not transcript.exists():
+        die(f"Transcript path does not exist: {transcript}")
+    agent = normalize_mcp_shared_agent(args.agent, "--agent")
+    key = args.key or mcp_session_key(agent, args.session_id)
+    data = {
+        "schema": "agent-mesh/mcp-session/v1",
+        "key": key,
+        "agent": agent,
+        "sessionId": args.session_id,
+        "source": args.source or agent,
+        "title": args.title or args.session_id,
+        "transcriptPath": str(transcript),
+        "transcriptFormat": args.format,
+        "registeredAt": now_iso(),
+        "updatedAt": now_iso(),
+    }
+    write_json(mcp_session_path(root, key), data)
+    append_mcp_audit(root, {"event": "session_registered", "agent": agent, "targetSession": key, "transcriptPath": str(transcript)})
+    if args.json:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+    else:
+        success(f"✅ registered MCP session {key}")
+
+
+def cmd_mcp_session_list(args):
+    root = require_mesh_root()
+    sessions = [s for s in load_mcp_sessions(root) if is_mcp_shared_session_supported(s)]
+    if args.agent:
+        agent = normalize_mcp_shared_agent(args.agent, "--agent")
+        sessions = [s for s in sessions if s.get("agent") == agent]
+    public = [{k: v for k, v in s.items() if k != "_path"} for s in sessions]
+    if args.json:
+        print(json.dumps(public, indent=2, ensure_ascii=False))
+        return
+    if not public:
+        print("No MCP sessions registered.")
+        return
+    for s in public:
+        print(f"- {s.get('key')} [{s.get('agent')}] {s.get('title')}")
+
+
+def cmd_mcp_access_request(args):
+    root = require_mesh_root()
+    data = create_mcp_access_request(
+        root,
+        requesting_agent=args.requesting_agent,
+        target_session=args.target_session,
+        reason=args.reason,
+        scope=args.scope,
+        current_session=args.current_session,
+    )
+    if args.json:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+    else:
+        print(f"MCP access request: {data['id']} ({data['requestingAgent']} -> {data['targetSession']})")
+
+
+def cmd_mcp_access_decide(args):
+    root = require_mesh_root()
+    result = decide_mcp_access_request(
+        root,
+        request_id=args.id,
+        decision=args.decision,
+        decided_by=args.by,
+        current_session=args.current_session,
+    )
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        req = result["request"]
+        print(f"MCP access {req.get('decision')} for request {req.get('id')}")
+
+
+def cmd_mcp_transcript_read(args):
+    root = require_mesh_root()
+    result = read_mcp_transcript_authorized(
+        root,
+        requesting_agent=args.requesting_agent,
+        target_session=args.target_session,
+        mode=args.mode,
+        current_session=args.current_session,
+        reason=args.reason,
+        limit=args.limit,
+        auto_request=False,
+    )
+    if args.json:
+        out = {k: v for k, v in result.items() if k != "session"}
+        out["session"] = {k: v for k, v in result["session"].items() if k != "_path"}
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+    else:
+        print(result["content"])
+
+
+def cmd_mcp_context_pack(args):
+    root = require_mesh_root()
+    result = make_mcp_context_pack(
+        root,
+        requesting_agent=args.requesting_agent,
+        target_session=args.target_session,
+        current_session=args.current_session,
+        token_budget=args.token_budget,
+        reason=args.reason,
+        auto_request=False,
+    )
+    if args.output:
+        Path(args.output).expanduser().write_text(result["pack"], encoding="utf-8")
+    if args.json:
+        out = {k: v for k, v in result.items() if k != "session"}
+        if "session" in result:
+            out["session"] = {k: v for k, v in result["session"].items() if k != "_path"}
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+    elif not args.output:
+        print(result["pack"])
+    else:
+        success(f"✅ context pack written to {args.output}")
+
+
+def cmd_mcp_server_list(args):
+    root = require_mesh_root()
+    data = load_mcp_servers(root)
+    if args.json:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+        return
+    servers = data.get("servers", {})
+    if not servers:
+        print("No downstream MCP servers registered.")
+        return
+    for name, server in sorted(servers.items()):
+        kind = server.get("transport") or server.get("type") or ("stdio" if server.get("command") else "unknown")
+        print(f"- {name} ({kind})")
+
+
+def cmd_mcp_server_set(args):
+    root = require_mesh_root()
+    if not is_agent_name(args.name):
+        die("Server name must be lowercase alphanumeric plus hyphen")
+    try:
+        server = json.loads(args.definition)
+    except json.JSONDecodeError as e:
+        die(f"Invalid server JSON: {e}")
+    if not isinstance(server, dict):
+        die("Server definition must be a JSON object")
+    data = load_mcp_servers(root)
+    data.setdefault("servers", {})[args.name] = server
+    data["updatedAt"] = now_iso()
+    write_mcp_servers(root, data)
+    append_mcp_audit(root, {"event": "mcp_server_set", "server": args.name})
+    if args.json:
+        print(json.dumps({"name": args.name, "server": server}, indent=2, ensure_ascii=False))
+    else:
+        success(f"✅ registered downstream MCP server {args.name}")
+
+
+def cmd_mcp_server_unset(args):
+    root = require_mesh_root()
+    data = load_mcp_servers(root)
+    if args.name not in data.get("servers", {}):
+        die(f"Unknown downstream MCP server: {args.name}")
+    removed = data["servers"].pop(args.name)
+    data["updatedAt"] = now_iso()
+    write_mcp_servers(root, data)
+    append_mcp_audit(root, {"event": "mcp_server_unset", "server": args.name})
+    if args.json:
+        print(json.dumps({"name": args.name, "removed": removed}, indent=2, ensure_ascii=False))
+    else:
+        success(f"✅ removed downstream MCP server {args.name}")
+
+
+def write_mcp_wire_message(stream, message):
+    payload = json.dumps(message, ensure_ascii=False).encode("utf-8")
+    stream.write(f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii") + payload)
+    stream.flush()
+
+
+def read_mcp_wire_message_from_fd(fd, timeout=10):
+    import select
+    deadline = datetime.datetime.now().timestamp() + timeout
+    buf = b""
+    while b"\r\n\r\n" not in buf and b"\n\n" not in buf:
+        remaining = deadline - datetime.datetime.now().timestamp()
+        if remaining <= 0:
+            raise TimeoutError("timed out waiting for MCP headers")
+        ready, _, _ = select.select([fd], [], [], remaining)
+        if not ready:
+            raise TimeoutError("timed out waiting for MCP headers")
+        chunk = os.read(fd, 1)
+        if not chunk:
+            raise EOFError("MCP stream closed before headers")
+        buf += chunk
+    sep = b"\r\n\r\n" if b"\r\n\r\n" in buf else b"\n\n"
+    header, rest = buf.split(sep, 1)
+    length = None
+    for line in header.decode("ascii", errors="replace").splitlines():
+        if line.lower().startswith("content-length:"):
+            length = int(line.split(":", 1)[1].strip())
+            break
+    if length is None:
+        # Also accept newline-delimited JSON for tiny test clients.
+        text = (header + sep + rest).decode("utf-8")
+        return json.loads(text)
+    body = rest
+    while len(body) < length:
+        remaining = deadline - datetime.datetime.now().timestamp()
+        if remaining <= 0:
+            raise TimeoutError("timed out waiting for MCP body")
+        ready, _, _ = select.select([fd], [], [], remaining)
+        if not ready:
+            raise TimeoutError("timed out waiting for MCP body")
+        chunk = os.read(fd, length - len(body))
+        if not chunk:
+            raise EOFError("MCP stream closed before body")
+        body += chunk
+    return json.loads(body[:length].decode("utf-8"))
+
+
+def read_mcp_wire_message(stream):
+    header = b""
+    while b"\r\n\r\n" not in header and b"\n\n" not in header:
+        ch = stream.read(1)
+        if not ch:
+            return None
+        header += ch
+    sep = b"\r\n\r\n" if b"\r\n\r\n" in header else b"\n\n"
+    header, rest = header.split(sep, 1)
+    length = None
+    for line in header.decode("ascii", errors="replace").splitlines():
+        if line.lower().startswith("content-length:"):
+            length = int(line.split(":", 1)[1].strip())
+            break
+    if length is None:
+        try:
+            return json.loads((header + sep + rest).decode("utf-8"))
+        except json.JSONDecodeError:
+            return None
+    body = rest
+    while len(body) < length:
+        chunk = stream.read(length - len(body))
+        if not chunk:
+            return None
+        body += chunk
+    return json.loads(body[:length].decode("utf-8"))
+
+
+def call_stdio_mcp_server(server, method, params=None, timeout=15):
+    if not server.get("command"):
+        die("Only stdio downstream MCP servers with a command are supported in this experimental proxy")
+    cmd = [server["command"]] + list(server.get("args", []))
+    env = os.environ.copy()
+    env.update({str(k): str(v) for k, v in server.get("env", {}).items()})
+    cwd = server.get("cwd") or server.get("workingDirectory")
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd, env=env)
+    try:
+        write_mcp_wire_message(proc.stdin, {
+            "jsonrpc": "2.0",
+            "id": "init",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "agent-mesh", "version": VERSION},
+            },
+        })
+        init = read_mcp_wire_message_from_fd(proc.stdout.fileno(), timeout=timeout)
+        if init.get("error"):
+            die(f"Downstream MCP initialize failed: {init['error']}")
+        write_mcp_wire_message(proc.stdin, {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
+        req_id = "call"
+        write_mcp_wire_message(proc.stdin, {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params or {}})
+        while True:
+            msg = read_mcp_wire_message_from_fd(proc.stdout.fileno(), timeout=timeout)
+            if msg.get("id") == req_id:
+                if msg.get("error"):
+                    die(f"Downstream MCP call failed: {msg['error']}")
+                return msg.get("result")
+    finally:
+        with contextlib.suppress(Exception):
+            proc.terminate()
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=2)
+        with contextlib.suppress(Exception):
+            proc.kill()
+
+
+def cmd_mcp_tools_list(args):
+    root = require_mesh_root()
+    data = load_mcp_servers(root)
+    server = data.get("servers", {}).get(args.server)
+    if not server:
+        die(f"Unknown downstream MCP server: {args.server}")
+    result = call_stdio_mcp_server(server, "tools/list", {}, timeout=args.timeout)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        for tool in result.get("tools", []):
+            print(f"- {args.server}:{tool.get('name')} — {tool.get('description', '')}")
+
+
+def cmd_mcp_call(args):
+    root = require_mesh_root()
+    data = load_mcp_servers(root)
+    server = data.get("servers", {}).get(args.server)
+    if not server:
+        die(f"Unknown downstream MCP server: {args.server}")
+    try:
+        tool_input = json.loads(args.input or "{}")
+    except json.JSONDecodeError as e:
+        die(f"Invalid input JSON: {e}")
+    result = call_stdio_mcp_server(server, "tools/call", {"name": args.tool, "arguments": tool_input}, timeout=args.timeout)
+    append_mcp_audit(root, {"event": "downstream_mcp_call", "server": args.server, "tool": args.tool})
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def mesh_mcp_tool_definitions():
+    return [
+        {"name": "mesh_agents_list", "description": "List Agent Mesh pulses and active tasks.", "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "mesh_sessions_list", "description": "List registered experimental OpenClaw/Hermes transcript sessions.", "inputSchema": {"type": "object", "properties": {"agent": {"type": "string", "enum": ["openclaw", "hermes"]}}}},
+        {"name": "mesh_access_request", "description": "Request approval to read an OpenClaw/Hermes transcript.", "inputSchema": {"type": "object", "properties": {"requestingAgent": {"type": "string", "enum": ["openclaw", "hermes"]}, "targetSession": {"type": "string"}, "currentSession": {"type": "string"}, "reason": {"type": "string"}, "scope": {"type": "string"}}, "required": ["requestingAgent", "targetSession"]}},
+        {"name": "mesh_transcript_read", "description": "Read a registered OpenClaw/Hermes transcript after approval; returns an approval request when gated.", "inputSchema": {"type": "object", "properties": {"requestingAgent": {"type": "string", "enum": ["openclaw", "hermes"]}, "targetSession": {"type": "string"}, "currentSession": {"type": "string"}, "mode": {"type": "string"}, "reason": {"type": "string"}}, "required": ["requestingAgent", "targetSession"]}},
+        {"name": "mesh_context_pack", "description": "Generate a bounded handoff context pack from an approved OpenClaw/Hermes transcript.", "inputSchema": {"type": "object", "properties": {"requestingAgent": {"type": "string", "enum": ["openclaw", "hermes"]}, "targetSession": {"type": "string"}, "currentSession": {"type": "string"}, "tokenBudget": {"type": "number"}, "reason": {"type": "string"}}, "required": ["requestingAgent", "targetSession"]}},
+        {"name": "mesh_mcp_servers_list", "description": "List downstream MCP servers registered in Agent Mesh.", "inputSchema": {"type": "object", "properties": {}}},
+        {"name": "mesh_mcp_tools_list", "description": "List tools from a registered stdio downstream MCP server.", "inputSchema": {"type": "object", "properties": {"server": {"type": "string"}}, "required": ["server"]}},
+        {"name": "mesh_mcp_call", "description": "Call a namespaced tool on a registered stdio downstream MCP server.", "inputSchema": {"type": "object", "properties": {"server": {"type": "string"}, "tool": {"type": "string"}, "input": {"type": "object"}}, "required": ["server", "tool"]}},
+    ]
+
+
+def handle_mesh_mcp_tool(root, name, args):
+    args = args or {}
+    if name == "mesh_agents_list":
+        paths = mesh_paths(root)
+        pulses = []
+        if paths["pulse"].exists():
+            for p in sorted(paths["pulse"].glob("*.json")):
+                with contextlib.suppress(Exception):
+                    pulses.append(read_json(p))
+        tasks = []
+        if paths["active"].exists():
+            for p in sorted(paths["active"].glob("*.json")):
+                with contextlib.suppress(Exception):
+                    tasks.append(read_json(p))
+        return mcp_tool_text({"pulses": pulses, "activeTasks": tasks})
+    if name == "mesh_sessions_list":
+        sessions = [s for s in load_mcp_sessions(root) if is_mcp_shared_session_supported(s)]
+        if args.get("agent"):
+            agent = normalize_mcp_shared_agent(args.get("agent"), "agent")
+            sessions = [s for s in sessions if s.get("agent") == agent]
+        return mcp_tool_text([{k: v for k, v in s.items() if k != "_path"} for s in sessions])
+    if name == "mesh_access_request":
+        req = create_mcp_access_request(root, args.get("requestingAgent"), args.get("targetSession"), args.get("reason"), args.get("scope", "full"), args.get("currentSession"))
+        return mcp_tool_text(req)
+    if name == "mesh_transcript_read":
+        result = read_mcp_transcript_authorized(root, args.get("requestingAgent"), args.get("targetSession"), mode=args.get("mode", "full"), current_session=args.get("currentSession"), reason=args.get("reason"), auto_request=True)
+        return mcp_tool_text(result)
+    if name == "mesh_context_pack":
+        result = make_mcp_context_pack(root, args.get("requestingAgent"), args.get("targetSession"), current_session=args.get("currentSession"), token_budget=args.get("tokenBudget", 4000), reason=args.get("reason"), auto_request=True)
+        return mcp_tool_text(result)
+    if name == "mesh_mcp_servers_list":
+        return mcp_tool_text(load_mcp_servers(root))
+    if name == "mesh_mcp_tools_list":
+        server_name = args.get("server")
+        server = load_mcp_servers(root).get("servers", {}).get(server_name)
+        if not server:
+            raise ValueError(f"Unknown downstream MCP server: {server_name}")
+        return mcp_tool_text(call_stdio_mcp_server(server, "tools/list", {}, timeout=15))
+    if name == "mesh_mcp_call":
+        server_name = args.get("server")
+        server = load_mcp_servers(root).get("servers", {}).get(server_name)
+        if not server:
+            raise ValueError(f"Unknown downstream MCP server: {server_name}")
+        return mcp_tool_text(call_stdio_mcp_server(server, "tools/call", {"name": args.get("tool"), "arguments": args.get("input") or {}}, timeout=15))
+    raise ValueError(f"Unknown tool: {name}")
+
+
+def cmd_mcp_serve(args):
+    root = require_mesh_root()
+    ensure_mcp_structure(root)
+    stdin = sys.stdin.buffer
+    stdout = sys.stdout.buffer
+    while True:
+        msg = read_mcp_wire_message(stdin)
+        if msg is None:
+            break
+        method = msg.get("method")
+        req_id = msg.get("id")
+        if method == "initialize":
+            write_mcp_wire_message(stdout, {"jsonrpc": "2.0", "id": req_id, "result": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "agent-mesh-mcp-experimental", "version": VERSION}}})
+        elif method == "notifications/initialized":
+            continue
+        elif method == "tools/list":
+            write_mcp_wire_message(stdout, {"jsonrpc": "2.0", "id": req_id, "result": {"tools": mesh_mcp_tool_definitions()}})
+        elif method == "tools/call":
+            params = msg.get("params") or {}
+            try:
+                result = handle_mesh_mcp_tool(root, params.get("name"), params.get("arguments") or {})
+                write_mcp_wire_message(stdout, {"jsonrpc": "2.0", "id": req_id, "result": result})
+            except Exception as e:
+                write_mcp_wire_message(stdout, {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32000, "message": str(e)}})
+        else:
+            if req_id is not None:
+                write_mcp_wire_message(stdout, {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Method not found: {method}"}})
+
+
 def cmd_qmd_remote_search(args):
     built = build_qmd_remote_command(args)
     if args.print_command:
@@ -2841,6 +3680,104 @@ def build_parser():
     p_migrate_apply.add_argument("--allow-unapproved", action="store_true", help="Apply a capsule without host approval (dangerous)")
     p_migrate_apply.set_defaults(func=cmd_migrate_apply)
 
+    p_mcp = sub.add_parser("mcp", help="Experimental Agent Mesh MCP/context tools")
+    mcp_sub = p_mcp.add_subparsers(dest="mcp_command")
+
+    p_mcp_serve = mcp_sub.add_parser("serve", help="Run experimental Agent Mesh MCP stdio server")
+    p_mcp_serve.set_defaults(func=cmd_mcp_serve)
+
+    p_mcp_session = mcp_sub.add_parser("session", help="Registered transcript sessions")
+    mcp_session_sub = p_mcp_session.add_subparsers(dest="mcp_session_command")
+    p_mcp_session_register = mcp_session_sub.add_parser("register", help="Register a transcript session descriptor")
+    p_mcp_session_register.add_argument("--agent", required=True)
+    p_mcp_session_register.add_argument("--session-id", required=True)
+    p_mcp_session_register.add_argument("--key")
+    p_mcp_session_register.add_argument("--title")
+    p_mcp_session_register.add_argument("--source")
+    p_mcp_session_register.add_argument("--transcript", required=True)
+    p_mcp_session_register.add_argument("--format", choices=["text", "jsonl"], default="text")
+    p_mcp_session_register.add_argument("--json", action="store_true")
+    p_mcp_session_register.set_defaults(func=cmd_mcp_session_register)
+
+    p_mcp_session_list = mcp_session_sub.add_parser("list", help="List registered transcript sessions")
+    p_mcp_session_list.add_argument("--agent")
+    p_mcp_session_list.add_argument("--json", action="store_true")
+    p_mcp_session_list.set_defaults(func=cmd_mcp_session_list)
+
+    p_mcp_access = mcp_sub.add_parser("access", help="Transcript access approval gate")
+    mcp_access_sub = p_mcp_access.add_subparsers(dest="mcp_access_command")
+    p_mcp_access_request = mcp_access_sub.add_parser("request", help="Request cross-agent transcript access")
+    p_mcp_access_request.add_argument("--requesting-agent", required=True)
+    p_mcp_access_request.add_argument("--target-session", required=True)
+    p_mcp_access_request.add_argument("--current-session")
+    p_mcp_access_request.add_argument("--scope", choices=["summary", "recent", "full"], default="full")
+    p_mcp_access_request.add_argument("--reason", required=True)
+    p_mcp_access_request.add_argument("--json", action="store_true")
+    p_mcp_access_request.set_defaults(func=cmd_mcp_access_request)
+
+    p_mcp_access_decide = mcp_access_sub.add_parser("decide", help="Decide an MCP access request")
+    p_mcp_access_decide.add_argument("--id", required=True)
+    p_mcp_access_decide.add_argument("--decision", choices=["allow-once", "allow-session", "deny"], required=True)
+    p_mcp_access_decide.add_argument("--by", required=True)
+    p_mcp_access_decide.add_argument("--current-session")
+    p_mcp_access_decide.add_argument("--json", action="store_true")
+    p_mcp_access_decide.set_defaults(func=cmd_mcp_access_decide)
+
+    p_mcp_transcript = mcp_sub.add_parser("transcript", help="Read registered transcripts")
+    mcp_transcript_sub = p_mcp_transcript.add_subparsers(dest="mcp_transcript_command")
+    p_mcp_transcript_read = mcp_transcript_sub.add_parser("read", help="Read a transcript after approval")
+    p_mcp_transcript_read.add_argument("--requesting-agent", required=True)
+    p_mcp_transcript_read.add_argument("--target-session", required=True)
+    p_mcp_transcript_read.add_argument("--current-session")
+    p_mcp_transcript_read.add_argument("--mode", choices=["summary", "recent", "full"], default="full")
+    p_mcp_transcript_read.add_argument("--reason")
+    p_mcp_transcript_read.add_argument("--limit", type=int)
+    p_mcp_transcript_read.add_argument("--json", action="store_true")
+    p_mcp_transcript_read.set_defaults(func=cmd_mcp_transcript_read)
+
+    p_mcp_context = mcp_sub.add_parser("context", help="Generate context packs")
+    mcp_context_sub = p_mcp_context.add_subparsers(dest="mcp_context_command")
+    p_mcp_context_pack = mcp_context_sub.add_parser("pack", help="Create a bounded context pack from a transcript")
+    p_mcp_context_pack.add_argument("--requesting-agent", required=True)
+    p_mcp_context_pack.add_argument("--target-session", required=True)
+    p_mcp_context_pack.add_argument("--current-session")
+    p_mcp_context_pack.add_argument("--token-budget", type=int, default=4000)
+    p_mcp_context_pack.add_argument("--reason")
+    p_mcp_context_pack.add_argument("--output")
+    p_mcp_context_pack.add_argument("--json", action="store_true")
+    p_mcp_context_pack.set_defaults(func=cmd_mcp_context_pack)
+
+    p_mcp_server = mcp_sub.add_parser("server", help="Downstream MCP server registry")
+    mcp_server_sub = p_mcp_server.add_subparsers(dest="mcp_server_command")
+    p_mcp_server_list = mcp_server_sub.add_parser("list", help="List downstream MCP servers")
+    p_mcp_server_list.add_argument("--json", action="store_true")
+    p_mcp_server_list.set_defaults(func=cmd_mcp_server_list)
+    p_mcp_server_set = mcp_server_sub.add_parser("set", help="Set a downstream MCP server JSON definition")
+    p_mcp_server_set.add_argument("name")
+    p_mcp_server_set.add_argument("definition")
+    p_mcp_server_set.add_argument("--json", action="store_true")
+    p_mcp_server_set.set_defaults(func=cmd_mcp_server_set)
+    p_mcp_server_unset = mcp_server_sub.add_parser("unset", help="Remove a downstream MCP server")
+    p_mcp_server_unset.add_argument("name")
+    p_mcp_server_unset.add_argument("--json", action="store_true")
+    p_mcp_server_unset.set_defaults(func=cmd_mcp_server_unset)
+
+    p_mcp_tools = mcp_sub.add_parser("tools", help="Downstream MCP tool discovery")
+    mcp_tools_sub = p_mcp_tools.add_subparsers(dest="mcp_tools_command")
+    p_mcp_tools_list = mcp_tools_sub.add_parser("list", help="List tools from a stdio downstream MCP server")
+    p_mcp_tools_list.add_argument("--server", required=True)
+    p_mcp_tools_list.add_argument("--timeout", type=int, default=15)
+    p_mcp_tools_list.add_argument("--json", action="store_true")
+    p_mcp_tools_list.set_defaults(func=cmd_mcp_tools_list)
+
+    p_mcp_call = mcp_sub.add_parser("call", help="Call a namespaced downstream MCP tool")
+    p_mcp_call.add_argument("--server", required=True)
+    p_mcp_call.add_argument("--tool", required=True)
+    p_mcp_call.add_argument("--input", default="{}")
+    p_mcp_call.add_argument("--timeout", type=int, default=15)
+    p_mcp_call.add_argument("--json", action="store_true")
+    p_mcp_call.set_defaults(func=cmd_mcp_call)
+
     p_qmd = sub.add_parser("qmd", help="Remote QMD retrieval helpers")
     qmd_sub = p_qmd.add_subparsers(dest="qmd_command")
 
@@ -2916,6 +3853,20 @@ def command_requires_lock(args):
         return True
     if command == "evolution":
         return getattr(args, "evolution_command", None) in {"log", "compact", "index"}
+    if command == "mcp":
+        mcp_command = getattr(args, "mcp_command", None)
+        if mcp_command == "session":
+            return getattr(args, "mcp_session_command", None) in {"register"}
+        if mcp_command == "access":
+            return getattr(args, "mcp_access_command", None) in {"request", "decide"}
+        if mcp_command == "transcript":
+            return getattr(args, "mcp_transcript_command", None) in {"read"}
+        if mcp_command == "context":
+            return getattr(args, "mcp_context_command", None) in {"pack"}
+        if mcp_command == "server":
+            return getattr(args, "mcp_server_command", None) in {"set", "unset"}
+        if mcp_command == "call":
+            return True
     if command == "index":
         return True
     if command == "state":
