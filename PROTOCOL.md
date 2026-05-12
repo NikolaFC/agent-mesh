@@ -19,7 +19,7 @@ Agent Mesh replaces that with a **shared folder + structured files** that any ag
 4. **Convention over Configuration** — Fixed paths, simple schemas, predictable behavior.
 5. **Append-Friendly** — History is preserved, not overwritten.
 6. **Shared-Root Ready** — Multiple local terminals may write the same `.mesh/` root safely through CLI-level locking and atomic file replacement.
-7. **Explicit Remote Sync** — Cross-device state sharing uses explicit `mesh state ...` Git commands, not hidden background network writes.
+7. **Explicit Remote Sync (experimental)** — Cross-device state sharing uses explicit `mesh state ...` Git commands, not hidden background network writes. This is opt-in and requires the standalone `mesh` CLI on every participating device.
 
 ## Directory Structure
 
@@ -218,7 +218,7 @@ This layer is intentionally not part of the stable core protocol yet. See `docs/
 
 The CLI serializes mutating operations with a local `.mesh/.lock` on POSIX platforms and writes files through same-directory temporary files followed by atomic replacement. This prevents partial JSON/Markdown writes and reduces lost-update risk when multiple terminals share one local mesh root.
 
-For cross-device sharing, Agent Mesh intentionally does not run a server and does not auto-sync in the background. Use a dedicated private Git state repo and the `mesh state` commands:
+For cross-device sharing, Agent Mesh intentionally does not run a server and does not auto-sync in the background. This layer is **experimental** in v0.3: use a dedicated private Git state repo and the `mesh state` commands only after each participating device has passed a local preflight (`command -v mesh`, `mesh root`, `mesh status`, `mesh validate`). `openclaw mesh` is not a fallback for the standalone CLI, and a copied `.mesh/` directory that only contains migration backups is not a valid Mesh root.
 
 ```bash
 mesh state configure --remote <git-url> [--branch main]
@@ -230,7 +230,7 @@ mesh state tailscale clone --host <tailnet-host> --repo-path </absolute/state.gi
 mesh state sync   # commit local state, pull/rebase remote state, rebuild indexes, push
 ```
 
-Recommended pattern: run `mesh state sync` before work and after meaningful pulse/task milestones. If Git reports a rebase conflict, resolve it explicitly; the CLI will not guess business truth.
+Recommended experimental pattern: run `mesh state sync` before work and after meaningful pulse/task milestones. If Git reports a rebase conflict, resolve it explicitly; the CLI will not guess business truth. If a client cannot run `mesh`, remove or disable Mesh-dependent startup rules on that client until installation/onboarding is complete.
 
 ## Migration Capsules
 
@@ -238,12 +238,12 @@ Recommended pattern: run `mesh state sync` before work and after meaningful puls
 
 Default `openclaw-persona` scope:
 
-- core startup/persona files: `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, `STARTUP_ONEPAGE.md`, `HEARTBEAT.md`, `TOOLS.md`
+- core startup/persona files: `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`, `STARTUP_ONEPAGE.md`, `HEARTBEAT.md`
 - optional stable `memory/` files via `--include-memory`, excluding raw/session/dream archives by default
 - optional `skills/` and `agents/` trees via `--include-skills`
-- default exclusions: `.env`, credentials, device pairing state, runtime state, logs, raw session/dream archives, key/cert files, `.git`, `.openclaw`, `node_modules`, backups, and caches
+- default exclusions: `.env`, credentials, device pairing state, runtime state, logs, raw session/dream archives, key/cert files, `.git`, `.openclaw`, `node_modules`, backups, caches, and host-local files such as `TOOLS.md`
 
-Migration capsules are for trusted host-to-client onboarding. They are not a secret manager, not a device pairing system, and not a substitute for reviewing scripts inside migrated skills.
+Migration capsules are for trusted host-to-client onboarding. They are not a secret manager, not a device pairing system, and not a substitute for reviewing scripts inside migrated skills. They also do not make host-local startup context portable; recreate or review files containing absolute paths (`/home/...`, `/Users/...`) on the target OS before enabling Mesh-dependent prompts.
 
 ## Remote QMD Retrieval
 
@@ -275,7 +275,7 @@ mesh shared read <file>
 mesh shared append <file> --content <text>
 mesh shared update <file> --content <text>  # Replace content
 
-# Cross-terminal / cross-device state sync
+# Cross-terminal / cross-device state sync (experimental)
 mesh state configure --remote <git-url> [--branch main]
 mesh state clone --remote <git-url> --target <dir> [--branch main]
 mesh state tailscale host-init [--repo-path <path>] [--state-root <dir>] [--seed-from <project-root>] [--host <host>] [--user <user>]

@@ -2664,8 +2664,13 @@ OPENCLAW_PERSONA_FILES = [
     "MEMORY.md",
     "STARTUP_ONEPAGE.md",
     "HEARTBEAT.md",
-    "TOOLS.md",
 ]
+OPENCLAW_HOST_LOCAL_FILES = {
+    # TOOLS.md is intentionally host-local: it usually contains absolute paths,
+    # OS-specific tool availability, and local operational boundaries. Copying a
+    # WSL TOOLS.md to macOS (or vice versa) creates misleading startup context.
+    "TOOLS.md",
+}
 MIGRATE_EXCLUDE_RE = re.compile(
     r"(^|/)(\.git|\.openclaw|credentials|devices|state|backups|dist|node_modules|__pycache__)(/|$)|"
     r"(^|/)(\.env($|\.)|.*credential.*|.*secret.*|.*token.*|.*password.*|.*private.*|paired\.json|pending\.json)$|"
@@ -2687,10 +2692,15 @@ def collect_migration_plan(root, preset="openclaw-persona", include_skills=False
     if preset != "openclaw-persona":
         die("Only migrate preset 'openclaw-persona' is supported in this version.")
     candidates = []
+    skipped = []
     for rel in OPENCLAW_PERSONA_FILES:
         p = root / rel
         if p.is_file():
             candidates.append(p)
+    for rel in OPENCLAW_HOST_LOCAL_FILES:
+        p = root / rel
+        if p.is_file():
+            skipped.append({"path": rel, "reason": "host-local-paths"})
     if include_skills:
         for base in (root / "skills", root / "agents"):
             if base.is_dir():
@@ -2710,7 +2720,6 @@ def collect_migration_plan(root, preset="openclaw-persona", include_skills=False
                 candidates.append(p)
 
     files = []
-    skipped = []
     total = 0
     seen = set()
     for path in sorted(candidates, key=lambda p: migrate_rel(p, root)):
@@ -2739,6 +2748,7 @@ def collect_migration_plan(root, preset="openclaw-persona", include_skills=False
     if include_memory:
         warnings.append("Memory migration includes stable memory files only; raw session archives/dream corpora/runtime memory are skipped by default.")
     warnings.append("Secrets, credentials, device pairing state, .env files, logs, and runtime state are excluded by default.")
+    warnings.append("Host-local files such as TOOLS.md are skipped; recreate or review them on each target OS/device.")
     return {"root": str(root), "preset": preset, "includeSkills": include_skills, "includeMemory": include_memory, "files": files, "skipped": skipped, "totalBytes": total, "warnings": warnings}
 
 
@@ -3565,7 +3575,7 @@ def build_parser():
     p_sync.add_argument("--repo", help="GitHub repo (owner/name). Auto-detects from git remote if omitted.")
     p_sync.set_defaults(func=cmd_sync)
 
-    p_state = sub.add_parser("state", help="Cross-terminal mesh state sync")
+    p_state = sub.add_parser("state", help="Experimental cross-terminal mesh state sync")
     state_sub = p_state.add_subparsers(dest="state_command")
 
     p_state_configure = state_sub.add_parser("configure", help="Configure a Git remote for mesh state sync")

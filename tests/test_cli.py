@@ -512,6 +512,7 @@ def test_migrate_capsule_plan_export_apply():
         dst.mkdir()
         (src / "AGENTS.md").write_text("# agents\n")
         (src / "SOUL.md").write_text("# soul\n")
+        (src / "TOOLS.md").write_text("Workspace root: /home/nikolafc/.openclaw/workspace\n")
         (src / ".env").write_text("SECRET=do-not-copy\n")
         (src / "skills" / "demo").mkdir(parents=True)
         (src / "skills" / "demo" / "SKILL.md").write_text("---\nname: demo\n---\n")
@@ -528,6 +529,7 @@ def test_migrate_capsule_plan_export_apply():
         skipped = {item["path"] for item in plan["skipped"]}
         check(rc == 0 and "AGENTS.md" in paths and "skills/demo/SKILL.md" in paths, "migrate plan includes persona and skill")
         check("memory/topics/identity.md" in paths, "migrate plan includes stable memory")
+        check("TOOLS.md" not in paths and "TOOLS.md" in skipped, "migrate plan skips host-local TOOLS.md")
         check("memory/.dreams/raw.txt" not in paths, "migrate plan excludes raw memory corpus")
         check("skills/demo/secret-token.txt" in skipped, "migrate plan excludes sensitive skill file")
 
@@ -554,6 +556,7 @@ def test_migrate_capsule_plan_export_apply():
         check(rc == 0, "migrate apply --write succeeds")
         check((dst / "AGENTS.md").read_text() == "# agents\n", "migrate apply writes persona file")
         check((dst / "skills" / "demo" / "SKILL.md").exists(), "migrate apply writes skill file")
+        check(not (dst / "TOOLS.md").exists(), "migrate apply does not copy host-local TOOLS.md")
         check(not (dst / ".env").exists(), "migrate apply does not copy .env")
         backups = list((dst / ".mesh" / "migrate" / "backups").rglob("AGENTS.md"))
         check(bool(backups), "migrate apply backs up overwritten files")

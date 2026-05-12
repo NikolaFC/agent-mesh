@@ -1,0 +1,1021 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Mesh Architecture — Presentation</title>
+  <style>
+    :root {
+      --bg: #0d1110;
+      --bg2: #111817;
+      --ink: #f4efe3;
+      --muted: #aeb8aa;
+      --faint: rgba(244, 239, 227, .12);
+      --line: rgba(244, 239, 227, .18);
+      --green: #b8ff6a;
+      --mint: #5df6c5;
+      --gold: #f6c35d;
+      --red: #ff6b5d;
+      --blue: #7ab8ff;
+      --violet: #c59cff;
+      --card: rgba(244, 239, 227, .055);
+      --shadow: 0 28px 80px rgba(0, 0, 0, .38);
+      --radius: 28px;
+      --mono: "SFMono-Regular", "Cascadia Code", "Liberation Mono", monospace;
+      --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Songti SC", serif;
+      --sans: "Avenir Next", "Gill Sans", "Trebuchet MS", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 18% 12%, rgba(184, 255, 106, .16), transparent 34%),
+        radial-gradient(circle at 85% 18%, rgba(93, 246, 197, .12), transparent 30%),
+        radial-gradient(circle at 64% 80%, rgba(246, 195, 93, .10), transparent 35%),
+        linear-gradient(145deg, #080b0a 0%, var(--bg) 42%, #15100b 100%);
+      color: var(--ink);
+      font-family: var(--sans);
+      overflow: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .35;
+      background-image:
+        linear-gradient(rgba(244, 239, 227, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(244, 239, 227, .025) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: radial-gradient(circle at center, black, transparent 78%);
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: .16;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 240 240' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+      mix-blend-mode: soft-light;
+    }
+
+    .deck {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      padding: clamp(34px, 4.6vw, 72px);
+      padding-bottom: clamp(46px, 5.2vw, 82px);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      gap: clamp(16px, 2.4vh, 24px);
+      opacity: 0;
+      transform: translate3d(3%, 0, 0) scale(.985);
+      pointer-events: none;
+      transition: opacity .45s ease, transform .45s ease;
+    }
+
+    .slide.active {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) scale(1);
+      pointer-events: auto;
+    }
+
+    .slide.out-left { transform: translate3d(-3%, 0, 0) scale(.985); }
+
+    .kicker {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: rgba(244,239,227,.74);
+      font-family: var(--mono);
+      font-size: clamp(12px, 1.18vw, 15px);
+      line-height: 1.25;
+      letter-spacing: .075em;
+      text-transform: uppercase;
+      max-width: calc(100vw - 190px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .kicker::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 22px var(--green);
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 {
+      font-family: var(--serif);
+      font-size: clamp(60px, 9.8vw, 140px);
+      line-height: .88;
+      letter-spacing: -.065em;
+      max-width: 1120px;
+    }
+
+    h2 {
+      font-family: var(--serif);
+      font-size: clamp(42px, 6.2vw, 86px);
+      line-height: .92;
+      letter-spacing: -.05em;
+      max-width: 1120px;
+      overflow-wrap: anywhere;
+      text-wrap: balance;
+    }
+
+    h3 {
+      font-size: clamp(22px, 2.2vw, 34px);
+      letter-spacing: -.03em;
+      line-height: 1.04;
+    }
+
+    .lead {
+      color: var(--muted);
+      font-size: clamp(21px, 2.2vw, 34px);
+      line-height: 1.32;
+      letter-spacing: -.025em;
+      max-width: 920px;
+    }
+
+    .sublead {
+      color: rgba(244, 239, 227, .78);
+      font-size: clamp(17px, 1.45vw, 22px);
+      line-height: 1.52;
+      max-width: 900px;
+    }
+
+    .accent { color: var(--green); }
+    .mint { color: var(--mint); }
+    .gold { color: var(--gold); }
+    .red { color: var(--red); }
+    .blue { color: var(--blue); }
+
+    .content {
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    .content.top { align-items: start; }
+    .stack { display: grid; gap: 28px; width: 100%; }
+    .stack.tight { gap: 18px; }
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.02fr) minmax(360px, .98fr);
+      gap: clamp(24px, 4vw, 62px);
+      align-items: center;
+      width: 100%;
+    }
+    .split > * { min-width: 0; }
+
+    .three {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px;
+      width: 100%;
+    }
+
+    .two {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+      width: 100%;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(180deg, rgba(244,239,227,.075), rgba(244,239,227,.03)),
+        var(--card);
+      box-shadow: var(--shadow);
+      padding: clamp(22px, 2.8vw, 38px);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      pointer-events: none;
+      background: linear-gradient(120deg, rgba(255,255,255,.08), transparent 28%, transparent 70%, rgba(184,255,106,.07));
+      opacity: .75;
+    }
+
+    .card > * { position: relative; z-index: 1; }
+
+    .mini {
+      display: inline-flex;
+      width: fit-content;
+      align-items: center;
+      gap: 7px;
+      font-family: var(--mono);
+      color: rgba(244, 239, 227, .78);
+      font-size: clamp(12px, 1.05vw, 14px);
+      line-height: 1.25;
+      letter-spacing: .055em;
+      text-transform: uppercase;
+      border: 1px solid rgba(244,239,227,.13);
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: rgba(0,0,0,.26);
+      backdrop-filter: blur(12px);
+    }
+
+    .big-number {
+      font-family: var(--serif);
+      font-size: clamp(54px, 7vw, 104px);
+      line-height: .8;
+      color: var(--green);
+      letter-spacing: -.07em;
+    }
+
+    .list {
+      display: grid;
+      gap: 16px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: rgba(244, 239, 227, .86);
+      font-size: clamp(17px, 1.55vw, 24px);
+      line-height: 1.35;
+    }
+
+    .list li {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+    }
+
+    .list li > span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .list li::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      margin-top: .55em;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 18px rgba(184, 255, 106, .7);
+    }
+
+    .tagrow { display: flex; flex-wrap: wrap; gap: 10px; }
+    .tag {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 13px;
+      color: rgba(244, 239, 227, .78);
+      background: rgba(0,0,0,.16);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+
+    .footer {
+      align-self: end;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      color: rgba(244, 239, 227, .78);
+      font-family: var(--mono);
+      font-size: clamp(13px, 1.1vw, 15px);
+      line-height: 1.28;
+      letter-spacing: .025em;
+      position: relative;
+      z-index: 12;
+      padding: 10px 14px;
+      border: 1px solid rgba(244,239,227,.15);
+      border-radius: 999px;
+      background: rgba(0,0,0,.24);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 10px 34px rgba(0,0,0,.24);
+      justify-self: start;
+      width: max-content;
+      max-width: calc(100vw - 176px);
+    }
+    .footer span:first-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .footer span:last-child {
+      flex: 0 0 auto;
+      color: rgba(184,255,106,.72);
+    }
+
+    .progress {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      height: 4px;
+      width: 100%;
+      background: rgba(244,239,227,.08);
+      z-index: 30;
+    }
+    .progress i {
+      display: block;
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, var(--green), var(--mint), var(--gold));
+      box-shadow: 0 0 24px rgba(184,255,106,.6);
+      transition: width .28s ease;
+    }
+
+    .hud {
+      position: fixed;
+      top: 22px;
+      right: 22px;
+      z-index: 31;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: rgba(244,239,227,.72);
+      font-family: var(--mono);
+      font-size: clamp(12px, 1vw, 13px);
+      line-height: 1.2;
+      background: rgba(0,0,0,.38);
+      border: 1px solid rgba(244,239,227,.16);
+      border-radius: 999px;
+      padding: 9px 12px;
+      backdrop-filter: blur(16px);
+      box-shadow: 0 10px 34px rgba(0,0,0,.24);
+    }
+    .hud span:last-child { display: none; }
+
+    .controls {
+      position: fixed;
+      right: 22px;
+      bottom: 18px;
+      z-index: 32;
+      display: flex;
+      gap: 8px;
+      opacity: .72;
+      transition: opacity .18s ease;
+    }
+    .controls:hover { opacity: 1; }
+
+    button {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      color: var(--ink);
+      background: rgba(244,239,227,.08);
+      border: 1px solid rgba(244,239,227,.16);
+      border-radius: 999px;
+      padding: 0;
+      font-family: var(--mono);
+      cursor: pointer;
+      transition: transform .18s ease, background .18s ease;
+      backdrop-filter: blur(14px);
+    }
+    button:hover { transform: translateY(-1px); background: rgba(184,255,106,.18); }
+
+    .code {
+      font-family: var(--mono);
+      white-space: pre-wrap;
+      color: rgba(244,239,227,.88);
+      font-size: clamp(13px, 1.25vw, 18px);
+      line-height: 1.5;
+      background: rgba(0,0,0,.36);
+      border: 1px solid rgba(244,239,227,.14);
+      border-radius: 22px;
+      padding: clamp(18px, 2vw, 28px);
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,.16), var(--shadow);
+      overflow: auto;
+      max-height: 65vh;
+    }
+
+    .mesh-diagram {
+      position: relative;
+      min-height: 560px;
+      width: 100%;
+    }
+
+    .core {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: clamp(230px, 26vw, 330px);
+      aspect-ratio: 1;
+      border-radius: 38px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      border: 1px solid rgba(184,255,106,.42);
+      background:
+        radial-gradient(circle at 35% 25%, rgba(184,255,106,.34), transparent 45%),
+        linear-gradient(145deg, rgba(184,255,106,.16), rgba(93,246,197,.06));
+      box-shadow: 0 0 70px rgba(184,255,106,.18), var(--shadow);
+    }
+
+    .core strong {
+      display: block;
+      font-family: var(--serif);
+      font-size: clamp(42px, 5vw, 72px);
+      letter-spacing: -.08em;
+      line-height: .85;
+    }
+
+    .core span { color: var(--muted); font-family: var(--mono); font-size: 13px; }
+
+    .node {
+      position: absolute;
+      width: clamp(150px, 17vw, 230px);
+      border: 1px solid rgba(244,239,227,.16);
+      border-radius: 26px;
+      padding: 20px;
+      background: rgba(244,239,227,.065);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .node b { display: block; font-size: clamp(19px, 1.8vw, 26px); letter-spacing: -.03em; }
+    .node span { display: block; margin-top: 7px; color: var(--muted); font-size: 14px; line-height: 1.35; }
+
+    .n1 { left: 2%; top: 4%; }
+    .n2 { right: 3%; top: 8%; }
+    .n3 { left: 6%; bottom: 5%; }
+    .n4 { right: 7%; bottom: 6%; }
+    .n5 { left: 50%; top: 0; transform: translateX(-50%); }
+
+    .line-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      opacity: .62;
+    }
+    .line-svg path {
+      stroke: rgba(184,255,106,.45);
+      stroke-width: 1.4;
+      fill: none;
+      stroke-dasharray: 7 8;
+      animation: dash 18s linear infinite;
+    }
+    @keyframes dash { to { stroke-dashoffset: -300; } }
+
+    .layers {
+      display: grid;
+      gap: clamp(10px, 1.5vh, 16px);
+      width: 100%;
+      min-height: 0;
+    }
+    .layer {
+      display: grid;
+      grid-template-columns: minmax(150px, 190px) minmax(0, 1fr) auto;
+      gap: clamp(14px, 1.6vw, 18px);
+      align-items: center;
+      padding: clamp(14px, 1.75vw, 22px) clamp(18px, 2vw, 24px);
+      border: 1px solid rgba(244,239,227,.15);
+      border-radius: 24px;
+      background: rgba(244,239,227,.055);
+      position: relative;
+      overflow: hidden;
+      min-width: 0;
+    }
+    .layer::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 5px;
+      background: var(--green);
+    }
+    .layer:nth-child(2)::before { background: var(--mint); }
+    .layer:nth-child(3)::before { background: var(--gold); }
+    .layer:nth-child(4)::before { background: var(--blue); }
+    .layer b {
+      font-size: clamp(20px, 1.72vw, 30px);
+      line-height: 1.02;
+      letter-spacing: -.04em;
+      overflow-wrap: anywhere;
+    }
+    .layer p {
+      color: rgba(244,239,227,.76);
+      line-height: 1.34;
+      font-size: clamp(14px, 1.08vw, 17px);
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .path {
+      justify-self: end;
+      font-family: var(--mono);
+      color: rgba(244,239,227,.82);
+      font-size: clamp(11px, .92vw, 13px);
+      line-height: 1.15;
+      border: 1px solid rgba(244,239,227,.16);
+      border-radius: 999px;
+      padding: 8px 10px;
+      background: rgba(0,0,0,.30);
+      white-space: nowrap;
+      max-width: 190px;
+      box-shadow: 0 8px 24px rgba(0,0,0,.20);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 14px;
+      width: 100%;
+    }
+    .step {
+      min-height: 260px;
+      border-radius: 28px;
+      padding: 22px;
+      background: rgba(244,239,227,.06);
+      border: 1px solid rgba(244,239,227,.15);
+      display: grid;
+      align-content: space-between;
+      position: relative;
+      overflow: hidden;
+    }
+    .step::before {
+      content: attr(data-num);
+      position: absolute;
+      right: 14px;
+      top: 8px;
+      font-family: var(--serif);
+      font-size: 76px;
+      line-height: 1;
+      color: rgba(244,239,227,.07);
+    }
+    .step b { font-size: clamp(18px, 1.6vw, 24px); letter-spacing: -.035em; }
+    .step span { color: var(--muted); line-height: 1.42; font-size: 14px; }
+    .step code { font-family: var(--mono); color: var(--green); font-size: 12px; }
+
+    .terminal-title {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--red); }
+    .dot:nth-child(2) { background: var(--gold); }
+    .dot:nth-child(3) { background: var(--green); }
+
+    .comparison {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      width: 100%;
+    }
+    .before { border-color: rgba(255,107,93,.28); }
+    .after { border-color: rgba(184,255,106,.32); }
+
+    .quote {
+      font-family: var(--serif);
+      font-size: clamp(34px, 4vw, 64px);
+      line-height: 1.02;
+      letter-spacing: -.045em;
+    }
+
+    .small-note {
+      color: rgba(244,239,227,.74);
+      font-size: clamp(13px, 1.02vw, 15px);
+      line-height: 1.46;
+      text-wrap: balance;
+    }
+
+    .topology {
+      display: grid;
+      grid-template-columns: 1fr 210px 1fr;
+      gap: 22px;
+      align-items: center;
+      width: 100%;
+    }
+    .device {
+      min-height: 310px;
+      display: grid;
+      gap: 14px;
+      align-content: center;
+      text-align: center;
+    }
+    .repo {
+      width: 210px;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      border: 1px solid rgba(246,195,93,.45);
+      background: radial-gradient(circle, rgba(246,195,93,.22), rgba(246,195,93,.04));
+      display: grid;
+      place-items: center;
+      text-align: center;
+      box-shadow: 0 0 70px rgba(246,195,93,.14);
+      font-family: var(--mono);
+      color: var(--gold);
+    }
+    .arrow {
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--green), transparent);
+      position: relative;
+      margin: 4px 0;
+    }
+
+    .speaker-notes {
+      display: none;
+      position: fixed;
+      left: 24px;
+      bottom: 24px;
+      max-width: 520px;
+      z-index: 40;
+      background: rgba(0,0,0,.72);
+      border: 1px solid rgba(184,255,106,.24);
+      border-radius: 20px;
+      padding: 16px 18px;
+      color: rgba(244,239,227,.82);
+      font-size: 14px;
+      line-height: 1.45;
+      backdrop-filter: blur(18px);
+      box-shadow: var(--shadow);
+    }
+    body.notes .slide.active .speaker-notes { display: block; }
+
+
+    .compact-layers .stack { gap: clamp(16px, 2.2vh, 28px); }
+    .compact-layers h2 { font-size: clamp(38px, 5.4vw, 78px); }
+    .compact-layers .footer { margin-top: 2px; }
+    .split .stack h2 { font-size: clamp(38px, 5.45vw, 78px); }
+
+    @media (max-width: 920px) {
+      body { overflow: auto; }
+      .deck { height: auto; }
+      .slide { position: relative; min-height: 100vh; opacity: 1; transform: none; pointer-events: auto; border-bottom: 1px solid var(--line); }
+      .hud, .controls, .progress { display: none; }
+      .split, .three, .two, .comparison, .topology { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; }
+      .mesh-diagram { min-height: 760px; }
+      .node { position: relative; inset: auto; transform: none; width: 100%; margin: 10px 0; }
+      .core { position: relative; inset: auto; transform: none; margin: 0 auto 18px; }
+      .line-svg { display: none; }
+      .layer { grid-template-columns: 1fr; }
+    }
+
+    @media print {
+      body { overflow: visible; background: #111; }
+      body::before, body::after, .hud, .controls, .progress { display: none; }
+      .deck { height: auto; }
+      .slide {
+        position: relative;
+        page-break-after: always;
+        width: 100vw;
+        height: 100vh;
+        opacity: 1 !important;
+        transform: none !important;
+        pointer-events: auto;
+      }
+      .speaker-notes { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="hud"><span id="count">01 / 12</span><span>← → navigate · N notes · P print</span></div>
+  <div class="controls"><button id="prev">←</button><button id="next">→</button></div>
+  <div class="progress"><i id="bar"></i></div>
+
+  <main class="deck" id="deck">
+    <section class="slide active" data-title="Title">
+      <div class="kicker">Agent Mesh v0.3.0 · Architecture Brief</div>
+      <div class="content">
+        <div class="stack">
+          <h1>让 Agent 不再是孤岛。</h1>
+          <p class="lead">Agent Mesh 是一个轻量、文件优先、跨终端可同步（experimental）的多 Agent 协作层：用 <span class="accent">.mesh/</span> 作为共享状态，让 OpenClaw、Hermes、Claude Code、Cursor、Codex 看见彼此在做什么。</p>
+          <div class="tagrow">
+            <span class="tag">file-as-API</span>
+            <span class="tag">zero server core</span>
+            <span class="tag">pulse · task · shared knowledge</span>
+            <span class="tag">cross-device sync · experimental</span>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>README / PROTOCOL source</span><span>2026-05-12</span></div>
+      <aside class="speaker-notes">开场一句：以前人是消息总线，现在 .mesh/ 变成消息总线；Agent Mesh 的核心不是“又一个工具”，而是让多个 AI runtime 共享工作真相。</aside>
+    </section>
+
+    <section class="slide" data-title="Pain">
+      <div class="kicker">Problem</div>
+      <div class="content">
+        <div class="comparison">
+          <div class="card before stack tight">
+            <div class="mini red">Before Agent Mesh</div>
+            <h2>人类成了上下文搬运工。</h2>
+            <ul class="list">
+              <li><span>每个 Agent 有独立 context window。</span></li>
+              <li><span>Hermes 完工要写大交接文档，OpenClaw 再人工拼状态。</span></li>
+              <li><span>“进展怎样？”需要重复查日志、PR、handoff。</span></li>
+              <li><span>状态过时、互相踩任务、阻塞不可见。</span></li>
+            </ul>
+          </div>
+          <div class="card after stack tight">
+            <div class="mini accent">After Agent Mesh</div>
+            <h2>一条命令看全局。</h2>
+            <ul class="list">
+              <li><span><code>mesh status</code> 汇总 agent freshness、任务、阻塞。</span></li>
+              <li><span>Pulse 显示谁正在做什么。</span></li>
+              <li><span>Task 记录 owner、进度、verdict、证据历史。</span></li>
+              <li><span>Shared knowledge 保存跨 agent 都该知道的当前真相。</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Problem: agents cannot see each other</span><span>02</span></div>
+      <aside class="speaker-notes">强调真实起源：OpenClaw 管编排/记忆，Hermes 管 PR 实现，两个系统并行但没有共同状态层。</aside>
+    </section>
+
+    <section class="slide" data-title="Thesis">
+      <div class="kicker">Core Thesis</div>
+      <div class="content">
+        <div class="split">
+          <div class="stack">
+            <p class="quote">不需要先建中心服务器。<br><span class="accent">Repo 本身就是 API。</span></p>
+            <p class="lead">任何能读写文件的 Agent，都能接入 Mesh。核心协议保持本地、透明、可 diff、可审计。</p>
+          </div>
+          <div class="card stack tight">
+            <div class="mini">Design principles</div>
+            <ul class="list">
+              <li><span><strong>File-as-API</strong>：固定路径 + 简单 schema。</span></li>
+              <li><span><strong>Zero dependency core</strong>：Python 标准库即可。</span></li>
+              <li><span><strong>Git-native</strong>：历史、diff、merge；跨设备 sync 目前 experimental。</span></li>
+              <li><span><strong>Append-friendly</strong>：保留 history，不靠覆盖口述交接。</span></li>
+              <li><span><strong>Explicit sync</strong>：远端同步由命令触发，不做隐式后台写网。</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Architecture stance</span><span>03</span></div>
+      <aside class="speaker-notes">这页讲哲学：越底层越简单。文件层先跑通，MCP/远端/迁移都是可选扩展，不污染 core。</aside>
+    </section>
+
+    <section class="slide" data-title="Architecture">
+      <div class="kicker">High-level Architecture</div>
+      <div class="content">
+        <div class="mesh-diagram">
+          <svg class="line-svg" viewBox="0 0 1000 620" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M210 100 C330 170 390 235 500 310" />
+            <path d="M790 115 C670 175 610 235 500 310" />
+            <path d="M220 505 C335 430 405 380 500 310" />
+            <path d="M780 500 C665 430 590 370 500 310" />
+            <path d="M500 70 C500 150 500 230 500 310" />
+          </svg>
+          <div class="core"><div><strong>.mesh/</strong><span>shared state layer</span></div></div>
+          <div class="node n1"><b>OpenClaw</b><span>主编排器；记忆、频道、heartbeat；读全局，写 openclaw pulse。</span></div>
+          <div class="node n2"><b>Hermes</b><span>独立 coding/runtime；处理 PR、实现、修复；写 hermes pulse + task history。</span></div>
+          <div class="node n3"><b>Claude / Codex</b><span>审查、重构、one-shot coding；按稳定 agent name 接入。</span></div>
+          <div class="node n4"><b>Cursor / Editor</b><span>编辑器内 Agent；读任务上下文，避免重复劳动。</span></div>
+          <div class="node n5"><b>State Machines</b><span>长任务通过 bridge 写入 task + sm-* pulse。</span></div>
+        </div>
+      </div>
+      <div class="footer"><span>Peer runtimes · shared state</span><span>04</span></div>
+      <aside class="speaker-notes">重点：Mesh 不拥有 Agent，也不替代 OpenClaw/Hermes。它只是共享黑板；每个 Agent 写自己的 pulse，task owner 管任务字段。</aside>
+    </section>
+
+    <section class="slide compact-layers" data-title="Data Model">
+      <div class="kicker">Core Data Model</div>
+      <div class="content top">
+        <div class="stack">
+          <h2>三层稳定协议：<span class="accent">Pulse / Tasks / Shared</span></h2>
+          <div class="layers">
+            <div class="layer">
+              <b>Pulse</b>
+              <p>实时心跳。每个 Agent 一个小 JSON，显示状态、当前任务、最近动作、阻塞与 next actions。</p>
+              <span class="path">.mesh/pulse/{agent}.json</span>
+            </div>
+            <div class="layer">
+              <b>Tasks</b>
+              <p>工作项真相。记录 owner、status、verdict、priority、progress、links 和 append-only history。</p>
+              <span class="path">.mesh/tasks/active/*.json</span>
+            </div>
+            <div class="layer">
+              <b>Shared Knowledge</b>
+              <p>项目级 operational memory：薄上下文、当前决策、阻塞、runtime status、SOP 链接。</p>
+              <span class="path">.mesh/shared/</span>
+            </div>
+            <div class="layer">
+              <b>Optional MCP</b>
+              <p>实验层：注册 session、申请授权、生成 bounded context pack；不改变 core 文件协议。</p>
+              <span class="path">.mesh/mcp/</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>File-capable agents can join</span><span>05</span></div>
+      <aside class="speaker-notes">别把 Mesh 讲成数据库。它是“约定好的文件结构 + CLI 安全写入 + schemas”。</aside>
+    </section>
+
+    <section class="slide" data-title="Lifecycle">
+      <div class="kicker">Agent Work Lifecycle</div>
+      <div class="content">
+        <div class="stack">
+          <h2>标准工作循环：先看全局，再写证据。</h2>
+          <div class="flow">
+            <div class="step" data-num="1"><b>Locate</b><span><code>mesh root</code><br>确认当前 runtime 连的是哪个 Mesh root。</span></div>
+            <div class="step" data-num="2"><b>Sync & Read</b><span><code>mesh state sync</code><br><code>mesh status</code><br>读 pulse、active tasks、shared context。</span></div>
+            <div class="step" data-num="3"><b>Start</b><span><code>mesh pulse update</code><br>写自己的 agent pulse：working + task + summary。</span></div>
+            <div class="step" data-num="4"><b>Milestone</b><span><code>mesh task history</code><br>把 commit、test、repair、validated 写入 history。</span></div>
+            <div class="step" data-num="5"><b>Close</b><span><code>mesh validate</code><br>done / blocked / reviewing；跨设备再 sync。</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Host wires prompt · heartbeat · watchdog</span><span>06</span></div>
+      <aside class="speaker-notes">Agent Mesh core 不会魔法般强迫 Agent 更新。每个 runtime 必须接入 startup prompt、heartbeat、任务生命周期和可选 watchdog。</aside>
+    </section>
+
+    <section class="slide" data-title="Commands">
+      <div class="kicker">CLI Surface</div>
+      <div class="content">
+        <div class="split">
+          <div class="stack">
+            <h2>演示时最容易讲清楚的 8 条命令。</h2>
+            <p class="lead">CLI 是人和 Agent 都能操作的统一界面；写入时带锁和原子替换，读出来就是可审计状态。</p>
+          </div>
+          <div class="code"><div class="terminal-title"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div># 初始化 / 定位
+mesh init
+mesh root --json
+mesh status
+
+# 心跳 / 任务
+mesh pulse update --agent hermes --status working --task pr-77540 --summary "started repair"
+mesh task create --id pr-77540 --title "cache lookups" --type upstream-pr --assign hermes
+mesh task history --id pr-77540 --agent openclaw --action validated --summary "production smoke passed"
+mesh validate --json
+
+# 安全修复
+mesh doctor --fix-safe</div>
+        </div>
+      </div>
+      <div class="footer"><span>Action aliases normalize safely</span><span>07</span></div>
+      <aside class="speaker-notes">讲一点可靠性：schema 枚举固定，旧别名会被 normalize，doctor 可安全修复历史数据。</aside>
+    </section>
+
+    <section class="slide" data-title="Cross Device">
+      <div class="kicker">v0.3 Experimental Cross-terminal / Cross-device Mesh</div>
+      <div class="content">
+        <div class="stack">
+          <h2>从本机黑板<br>试验性升级成<span class="accent">多端共享协作层</span>。</h2>
+          <div class="topology">
+            <div class="card device"><div class="big-number">WSL</div><p class="sublead">OpenClaw / Hermes / Codex<br><code>MESH_ROOT=~/agent-mesh-state</code></p><div class="arrow"></div><p class="small-note">mesh state sync</p></div>
+            <div class="repo">experimental<br>private Git state repo<br><br>or<br><br>Tailscale SSH</div>
+            <div class="card device"><div class="big-number">Mac</div><p class="sublead">Claude Code / Cursor / local terminal<br><code>MESH_ROOT=~/agent-mesh-state</code></p><div class="arrow"></div><p class="small-note">explicit pull / push / sync</p></div>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Experimental · explicit sync only</span><span>08</span></div>
+      <aside class="speaker-notes">这里说清边界：不是把整个 workspace 同步。只同步 Mesh state；人格/skill 迁移另走 migration capsule。</aside>
+    </section>
+
+    <section class="slide" data-title="Trust">
+      <div class="kicker">Reliability & Safety</div>
+      <div class="content">
+        <div class="three">
+          <div class="card stack tight">
+            <div class="mini accent">Write safety</div>
+            <h3>锁 + 原子替换</h3>
+            <p class="sublead">POSIX 平台写操作使用 <code>.mesh/.lock</code>，JSON/Markdown 通过同目录临时文件再 atomic replace，降低多终端写坏状态风险。</p>
+          </div>
+          <div class="card stack tight">
+            <div class="mini mint">Schema hygiene</div>
+            <h3>validate / doctor</h3>
+            <p class="sublead"><code>mesh validate</code> 检查结构；<code>doctor --fix-safe</code> 做机械安全修复：索引、legacy 字段、别名归一、terminal task 归档。</p>
+          </div>
+          <div class="card stack tight">
+            <div class="mini gold">Access boundary</div>
+            <h3>MCP 有授权闸门</h3>
+            <p class="sublead">跨 Agent 读取 transcript 必须 request → grant；支持 allow-once / scoped allow-session / deny，并写 audit log。</p>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>File core · gated MCP</span><span>09</span></div>
+      <aside class="speaker-notes">这页回答“可靠么/安全吗”。核心状态透明可审计，跨会话上下文读取不默认放开。</aside>
+    </section>
+
+    <section class="slide" data-title="Boundary">
+      <div class="kicker">System Boundary</div>
+      <div class="content">
+        <div class="two">
+          <div class="card stack tight">
+            <h2>Agent Mesh core 做什么？</h2>
+            <ul class="list">
+              <li><span>提供 <code>mesh</code> CLI。</span></li>
+              <li><span>维护 <code>.mesh/pulse</code>、<code>.mesh/tasks</code>、<code>.mesh/shared</code>。</span></li>
+              <li><span>定义 schema、索引、validate、doctor。</span></li>
+              <li><span>提供实验性 cross-device state sync。</span></li>
+            </ul>
+          </div>
+          <div class="card stack tight">
+            <h2>它不做什么？</h2>
+            <ul class="list">
+              <li><span>不替代 OpenClaw / Hermes / Claude Code。</span></li>
+              <li><span>不自动读取或注入所有 raw transcript。</span></li>
+              <li><span>不强迫 agent 更新 pulse；接入由 host prompt / heartbeat / watchdog 保证。</span></li>
+              <li><span>不把 secrets、credentials、runtime logs 当迁移默认项。</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>Boundaries prevent architecture creep</span><span>10</span></div>
+      <aside class="speaker-notes">用这页防误解：Agent Mesh 不是“全能中心脑”，它是共享状态协议。</aside>
+    </section>
+
+    <section class="slide" data-title="MCP">
+      <div class="kicker">Experimental MCP Layer</div>
+      <div class="content">
+        <div class="split">
+          <div class="stack">
+            <h2>可控地读取<br>另一个 Agent 的上下文。</h2>
+            <p class="lead">Mesh MCP 是实验扩展：当 task/pulse/status docs 不够时，Agent 可以申请读取 OpenClaw ↔ Hermes 的 session transcript，并生成有 token budget 的 context pack。</p>
+            <div class="tagrow"><span class="tag">request</span><span class="tag">grant</span><span class="tag">audit</span><span class="tag">context pack</span><span class="tag">stdio MCP</span></div>
+          </div>
+          <div class="code"><div class="terminal-title"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>mesh mcp session register \
+  --agent hermes \
+  --session-id bug-123 \
+  --transcript /path/to/log.txt
+
+mesh mcp access request \
+  --requesting-agent openclaw \
+  --target-session hermes:bug-123 \
+  --reason "handoff"
+
+mesh mcp access decide --id &lt;request&gt; --decision allow-once --by satoshi
+mesh mcp context pack --requesting-agent openclaw --target-session hermes:bug-123 --token-budget 4000</div>
+        </div>
+      </div>
+      <div class="footer"><span>Transcript scope: OpenClaw ↔ Hermes</span><span>11</span></div>
+      <aside class="speaker-notes">MCP 层的核心价值不是工具列表，而是“带权限的跨 Agent 上下文织物”。</aside>
+    </section>
+
+    <section class="slide" data-title="Close">
+      <div class="kicker">Takeaway</div>
+      <div class="content">
+        <div class="stack">
+          <h2>一句话总结：</h2>
+          <p class="quote"><span class="accent">Agent Mesh 把多 Agent 协作从聊天转述，变成可读、可写、可验证的共享状态协议。</span></p>
+          <div class="three">
+            <div class="card"><div class="mini">Today</div><h3>本地 Mesh + 实验性跨设备</h3><p class="sublead">OpenClaw、Hermes、Claude Code、Cursor 共享 task/pulse/context。</p></div>
+            <div class="card"><div class="mini">Next</div><h3>更稳的 Agent 接入</h3><p class="sublead">把 prompt、heartbeat、watchdog、state machine bridge 做成标准 onboarding。</p></div>
+            <div class="card"><div class="mini">Future</div><h3>受控上下文网络</h3><p class="sublead">MCP context pack、remote QMD、persona migration，逐步从“状态共享”走向“协作底座”。</p></div>
+          </div>
+        </div>
+      </div>
+      <div class="footer"><span>github.com/NikolaFC/agent-mesh</span><span>12</span></div>
+      <aside class="speaker-notes">收尾可以说：先用最朴素的文件协议解决 80% 协作痛点，再把需要权限和网络的能力放到可选层。</aside>
+    </section>
+  </main>
+
+  <script>
+    const slides = [...document.querySelectorAll('.slide')];
+    const count = document.getElementById('count');
+    const bar = document.getElementById('bar');
+    let index = 0;
+
+    function pad(n) { return String(n).padStart(2, '0'); }
+    function show(next) {
+      const previous = index;
+      index = Math.max(0, Math.min(slides.length - 1, next));
+      slides.forEach((slide, i) => {
+        slide.classList.toggle('active', i === index);
+        slide.classList.toggle('out-left', i < index);
+      });
+      count.textContent = `${pad(index + 1)} / ${pad(slides.length)}`;
+      bar.style.width = `${((index + 1) / slides.length) * 100}%`;
+      if (previous !== index) history.replaceState(null, '', `#${index + 1}`);
+    }
+
+    document.getElementById('prev').addEventListener('click', () => show(index - 1));
+    document.getElementById('next').addEventListener('click', () => show(index + 1));
+
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowRight' || event.key === ' ' || event.key === 'PageDown') show(index + 1);
+      if (event.key === 'ArrowLeft' || event.key === 'PageUp') show(index - 1);
+      if (event.key.toLowerCase() === 'home') show(0);
+      if (event.key.toLowerCase() === 'end') show(slides.length - 1);
+      if (event.key.toLowerCase() === 'n') document.body.classList.toggle('notes');
+      if (event.key.toLowerCase() === 'p') window.print();
+    });
+
+    const hashIndex = Number(location.hash.replace('#', '')) - 1;
+    if (!Number.isNaN(hashIndex) && hashIndex >= 0) index = hashIndex;
+    show(index);
+  </script>
+</body>
+</html>

@@ -27,6 +27,8 @@ command -v mesh
 mesh status
 ```
 
+如果 `command -v mesh` 没有输出，先停止接入：该实例尚未 Mesh-enabled，不能在启动文件里保留 `mesh status` / `mesh pulse` 这类必跑规则。`openclaw mesh` 不是 standalone `mesh` CLI 的 fallback。
+
 ### 2. 设置环境变量
 
 在两个实例的启动配置中加入：

@@ -41,7 +41,15 @@ If the agent's working directory may not be the project root, set:
 export MESH_ROOT=/path/to/project/root
 ```
 
-For WSL ↔ Mac / cross-device sharing, prefer a dedicated private state root instead of a normal code repo:
+For WSL ↔ Mac / cross-device sharing, treat the feature as **experimental**. Prefer a dedicated private state root instead of a normal code repo, and first verify that the standalone CLI exists on every participating device:
+
+```bash
+command -v mesh
+mesh root
+mesh status
+```
+
+If `command -v mesh` returns nothing on a client, stop: that client is not Mesh-enabled yet. `openclaw mesh` is not a supported fallback, and a copied `.mesh/` directory containing only migration backups is not a valid shared state root. Do not leave startup prompt rules that call `mesh status`, `mesh pulse`, or `mesh state sync` on that client until this preflight passes.
 
 ```bash
 # First machine
@@ -100,7 +108,7 @@ mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root /path/to/client-wo
 mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root /path/to/client-workspace --write
 ```
 
-Migration excludes `.env`, credentials, device pairing state, runtime state, logs, raw session/dream archives, key/cert files, and common caches by default. Review migrated memory scope and skill scripts before enabling them in a privileged runtime.
+Migration excludes `.env`, credentials, device pairing state, runtime state, logs, raw session/dream archives, key/cert files, host-local files such as `TOOLS.md`, and common caches by default. Review migrated memory scope and skill scripts before enabling them in a privileged runtime. Any file that contains absolute paths (`/home/...`, `/Users/...`) must be regenerated or reviewed on the target OS before enabling Mesh-dependent rules.
 
 If the client should query the host's QMD index without copying vector stores, configure remote QMD retrieval:
 
@@ -125,6 +133,36 @@ mesh validate --json
 ```
 
 `mesh status` should show the shared state; `validate` should be clean on a fresh install.
+
+### 1.1 Repair pattern: migrated client has Mesh rules but no `mesh` CLI
+
+Use this when a client workspace was populated by a persona/memory/skill migration capsule, but live checks show:
+
+- `command -v mesh` / `which -a mesh` returns nothing;
+- `openclaw mesh --help` only shows generic OpenClaw help;
+- `.mesh/` exists but contains only migration backup directories, not `shared/`, `tasks/`, and `pulse/`.
+
+Treat the client as **not Mesh-enabled**. Do not run Mesh-dependent heartbeat/watchdog/state-machine rules on that client until repaired.
+
+Minimal repair sequence:
+
+1. Pause or disable client-local rules that shell out to `mesh`, especially heartbeat pulse checks and long-task/state-machine Mesh bridges.
+2. Install or copy the standalone Agent Mesh CLI to a client-local executable path, for example `/opt/homebrew/bin/mesh`, `/usr/local/bin/mesh`, or `$HOME/.local/bin/mesh`, then verify the OpenClaw agent runtime can see it with `command -v mesh`.
+3. Initialize or restore the operational Mesh root so these directories exist under the selected root: `.mesh/shared/`, `.mesh/tasks/active/`, `.mesh/tasks/archived/`, and `.mesh/pulse/`.
+4. Set `MESH_ROOT` to the client-local workspace or state root. Do not reuse absolute paths copied from another OS.
+5. Replace host-specific paths in startup files with client-local paths. Files such as `TOOLS.md` should normally be regenerated/reviewed on the target host, not copied from the source host.
+6. Validate from the client runtime:
+
+   ```bash
+   mesh root
+   mesh status
+   mesh pulse check --ignore-done --stale-minutes 60
+   mesh validate --json
+   ```
+
+7. Only after validation succeeds, re-enable Mesh-dependent heartbeat/watchdog/state-machine rules.
+
+If any validation step still depends on a path from another host (for example a Linux path on macOS, or a macOS path on Linux), stop and fix the startup/context file first. Do not work around it by symlinking private host paths unless that was an explicit operator decision.
 
 ## 2. Choose a stable agent name
 

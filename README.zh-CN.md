@@ -58,9 +58,13 @@ mesh init
 
 **重要：** Agent Mesh core 只提供共享状态层；每个 Agent 仍然需要把 Mesh 接入自己的启动 prompt、heartbeat/watchdog、任务生命周期和告警投递。首次接入必读：[`docs/runbooks/agent-first-install.md`](docs/runbooks/agent-first-install.md)。
 
-## 跨终端 / 跨设备 Mesh
+## 跨终端 / 跨设备 Mesh（实验性）
 
 Agent Mesh 可以在 WSL、macOS 终端、OpenClaw、Hermes、Claude Code、Codex 等任何能读写文件的 Agent 之间共享。
+
+**实验状态：** 跨设备 state sync 是 v0.3 的 opt-in 实验功能，还不是稳定 core 的保证能力。每台参与设备都必须安装独立的 `mesh` CLI 并确保在 `PATH` 里；`openclaw mesh` 不是可用 fallback；只复制出一个 `.mesh/` 目录、但没有正常的 `shared/`、`tasks/`、`pulse/` 结构，也不算完成接入。如果 client 上 `command -v mesh` 失败，就把该设备视为 **未接入 Mesh**，不要保留默认会调用 `mesh status` 或 `mesh pulse` 的启动规则。
+
+如果迁移后的 client 已经有 Mesh 规则、但没有 `mesh` CLI，先暂停依赖 Mesh 的规则，再按 [`docs/runbooks/agent-first-install.md#11-repair-pattern-migrated-client-has-mesh-rules-but-no-mesh-cli`](docs/runbooks/agent-first-install.md#11-repair-pattern-migrated-client-has-mesh-rules-but-no-mesh-cli) 的修复清单处理。
 
 同一台机器或同一个挂载工作区里的多个终端，直接让所有 runtime 指向同一个 root：
 
@@ -117,10 +121,11 @@ mesh pulse update --agent mac-agent --status working --summary "started"
 mesh state sync --message "mac-agent pulse/task update"  # 里程碑后同步
 ```
 
-安全说明：
+实验性安全说明：
 - 使用专用私有状态仓库；不要把普通代码仓库直接当 state backend，除非你明确传 `--allow-project-repo`。
 - 状态同步是显式命令，不是隐藏自动同步；如果 Git 报 rebase conflict，就按普通 Git 冲突处理。
 - Mesh 写操作在 POSIX 平台使用 `.mesh/.lock` 和原子替换文件，多终端同时写更安全。
+- 迁移后必须按目标 OS 复查。Host-local 启动文件可能残留 `/home/...` 或 `/Users/...` 这类绝对路径；启用依赖 Mesh 的规则前，必须在目标机器上重新生成或人工确认。
 
 ## 主 host 批准的人格 / skill 迁移
 
@@ -145,7 +150,7 @@ mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspa
 mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspace --write
 ```
 
-`openclaw-persona` preset 会包含 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`USER.md`、`MEMORY.md` 等核心启动/人格文件；可通过 `--include-memory` 包含稳定 `memory/` 内容；也可通过 `--include-skills` 包含 `skills/` + `agents/` 内容。默认排除 secrets、credentials、device pairing state、`.env`、logs、runtime state、raw session/dream archives 和常见 key/cert 文件。`apply` 默认只 dry-run，只有传 `--write` 才写入，并会把被覆盖文件备份到 `.mesh/migrate/backups/`。
+`openclaw-persona` preset 会包含 `AGENTS.md`、`SOUL.md`、`IDENTITY.md`、`USER.md`、`MEMORY.md` 等核心启动/人格文件；可通过 `--include-memory` 包含稳定 `memory/` 内容；也可通过 `--include-skills` 包含 `skills/` + `agents/` 内容。默认排除 secrets、credentials、device pairing state、`.env`、logs、runtime state、raw session/dream archives、常见 key/cert 文件，以及 `TOOLS.md` 这类 host-local 文件。`apply` 默认只 dry-run，只有传 `--write` 才写入，并会把被覆盖文件备份到 `.mesh/migrate/backups/`。
 
 ## 实验性 Mesh MCP 接口
 
@@ -281,9 +286,9 @@ CI 跑同一组核心检查：`python3 scripts/verify_suite.py`、`python3 scrip
 | `mesh validate [--json]` | 校验 schema + advisory boundary warnings |
 | `mesh doctor [--fix-safe]` | 安全修复状态卫生 + advisory boundary warnings |
 | `mesh sync [--repo]` | 从 GitHub 同步 PR 状态 |
-| `mesh state configure` | 配置跨设备 mesh state 的私有 Git 后端 |
-| `mesh state clone` | 克隆共享 mesh state root，并输出 `MESH_ROOT` 设置方式 |
-| `mesh state tailscale host-init|join|url|configure|clone` | 使用 Tailscale SSH 主机作为私有 Git state backend |
+| `mesh state configure` | 实验性：配置跨设备 mesh state 的私有 Git 后端 |
+| `mesh state clone` | 实验性：克隆共享 mesh state root，并输出 `MESH_ROOT` 设置方式 |
+| `mesh state tailscale host-init|join|url|configure|clone` | 实验性：使用 Tailscale SSH 主机作为私有 Git state backend |
 | `mesh state pull` | 拉取/rebase 远端 mesh state |
 | `mesh state push` | 提交并推送本地 mesh state |
 | `mesh state sync` | 提交本地状态、拉取/rebase、重建索引并推送 |

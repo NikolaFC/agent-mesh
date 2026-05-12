@@ -4,19 +4,27 @@ All notable changes to Agent Mesh are documented here.
 
 This project follows SemVer. See `VERSION` for the current package version.
 
+## [Unreleased]
+
+### Changed
+
+- Marked cross-terminal/cross-device Mesh state sync as experimental in docs/runbooks and clarified that every target device must have the standalone `mesh` CLI installed; `openclaw mesh` is not a fallback.
+- Migration capsules now skip host-local `TOOLS.md` by default so WSL/macOS absolute paths and local tool boundaries are not copied blindly across devices.
+- Added a first-install repair checklist for migrated clients that have Mesh-dependent rules but no standalone `mesh` CLI or operational `.mesh/shared`, `.mesh/tasks`, and `.mesh/pulse` tree.
+
 ## [0.3.0] - 2026-05-10
 
 ### Added
 
 - Added `mesh root [--json]` to show the detected mesh root, `.mesh` path, root source, and symlink resolution.
-- Added cross-terminal/cross-device Git state backend commands:
+- Added experimental cross-terminal/cross-device Git state backend commands:
   - `mesh state configure`
   - `mesh state clone`
   - `mesh state status`
   - `mesh state pull`
   - `mesh state push`
   - `mesh state sync`
-- Added Tailscale SSH helpers for private tailnet-backed state repos:
+- Added experimental Tailscale SSH helpers for private tailnet-backed state repos:
   - `mesh state tailscale host-init`
   - `mesh state tailscale join`
   - `mesh state tailscale url`

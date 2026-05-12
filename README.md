@@ -60,9 +60,13 @@ mesh init
 
 **Important:** Agent Mesh core only provides the shared state layer. Each agent must still wire Mesh into its own startup prompt, heartbeat/watchdog, task lifecycle, and alert delivery. See the required first-install runbook: [`docs/runbooks/agent-first-install.md`](docs/runbooks/agent-first-install.md).
 
-## Cross-terminal / cross-device Mesh
+## Cross-terminal / cross-device Mesh (experimental)
 
 Agent Mesh can be shared across WSL, macOS terminals, OpenClaw, Hermes, Claude Code, Codex, and other file-capable agents.
+
+**Experimental status:** cross-device state sync is an opt-in v0.3 feature, not a guaranteed part of the stable core yet. Every participating device must have the standalone `mesh` CLI installed and on `PATH`; `openclaw mesh` is not a supported fallback, and a copied `.mesh/` directory without normal `shared/`, `tasks/`, and `pulse/` contents is not a completed onboarding. If `command -v mesh` fails on a client, treat that client as **not Mesh-enabled** and do not leave startup rules that assume `mesh status` or `mesh pulse` will work.
+
+If a migrated client has Mesh rules but no `mesh` CLI, pause Mesh-dependent rules and use the repair checklist in [`docs/runbooks/agent-first-install.md#11-repair-pattern-migrated-client-has-mesh-rules-but-no-mesh-cli`](docs/runbooks/agent-first-install.md#11-repair-pattern-migrated-client-has-mesh-rules-but-no-mesh-cli).
 
 For multiple terminals on the same machine or mounted workspace, point every runtime at the same root:
 
@@ -119,10 +123,11 @@ mesh pulse update --agent mac-agent --status working --summary "started"
 mesh state sync --message "mac-agent pulse/task update"  # after milestones
 ```
 
-Safety notes:
+Experimental safety notes:
 - Use a dedicated private state repo; do not point `mesh state configure` at a normal project repo unless you pass `--allow-project-repo` deliberately.
 - State sync is explicit, not hidden auto-sync. If Git reports a rebase conflict, resolve it like any normal Git conflict.
 - Mesh mutations use a local `.mesh/.lock` and atomic file replacement on POSIX platforms so multi-terminal writes on the same machine are safer.
+- Re-check each target OS after migration. Host-local startup files may still contain absolute paths such as `/home/...` or `/Users/...`; those must be regenerated or reviewed on the target host before enabling Mesh-dependent rules.
 
 ## Host-approved persona / skill migration
 
@@ -147,7 +152,7 @@ mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspa
 mesh migrate apply /tmp/openclaw-persona.tar.gz --target-root ~/openclaw-workspace --write
 ```
 
-The `openclaw-persona` preset includes core startup/persona files such as `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`; optional stable `memory/` content via `--include-memory`; and optional `skills/` + `agents/` content via `--include-skills`. It excludes secrets, credentials, device pairing state, `.env`, logs, runtime state, raw session/dream archives, and common key/cert files by default. `apply` is dry-run unless `--write` is passed and backs up overwritten files under `.mesh/migrate/backups/`.
+The `openclaw-persona` preset includes core startup/persona files such as `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `MEMORY.md`; optional stable `memory/` content via `--include-memory`; and optional `skills/` + `agents/` content via `--include-skills`. It excludes secrets, credentials, device pairing state, `.env`, logs, runtime state, raw session/dream archives, common key/cert files, and host-local files such as `TOOLS.md` by default. `apply` is dry-run unless `--write` is passed and backs up overwritten files under `.mesh/migrate/backups/`.
 
 ## Experimental Mesh MCP interface
 
@@ -281,9 +286,9 @@ CI runs the same core checks: `python3 scripts/verify_suite.py`, `python3 script
 | `mesh validate [--json]` | Validate all .mesh files against schemas |
 | `mesh doctor [--fix-safe]` | Inspect or safely repair state hygiene |
 | `mesh sync [--repo]` | Sync PR status from GitHub |
-| `mesh state configure` | Configure a private Git backend for cross-device mesh state |
-| `mesh state clone` | Clone a shared mesh state root and print `MESH_ROOT` setup |
-| `mesh state tailscale host-init|join|url|configure|clone` | Use a Tailscale SSH host as the private Git state backend |
+| `mesh state configure` | Experimental: configure a private Git backend for cross-device mesh state |
+| `mesh state clone` | Experimental: clone a shared mesh state root and print `MESH_ROOT` setup |
+| `mesh state tailscale host-init|join|url|configure|clone` | Experimental: use a Tailscale SSH host as the private Git state backend |
 | `mesh state pull` | Pull/rebase remote mesh state |
 | `mesh state push` | Commit and push local mesh state |
 | `mesh state sync` | Commit local state, pull/rebase, rebuild indexes, and push |

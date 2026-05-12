@@ -23,6 +23,8 @@ The `mesh` CLI uses this to locate `.mesh/` regardless of your current directory
 
 Agent Mesh core is only the shared state layer. This agent must also wire Mesh into its own work loop:
 
+0. Verify `command -v mesh` succeeds on this device. If it does not, do not enable the rest of this prompt yet; `openclaw mesh` is not a fallback for the standalone CLI.
+
 1. Keep a stable agent name.
 2. Refresh pulse at start, milestones, blockers, and completion.
 3. Append task history when meaningful work happens.
