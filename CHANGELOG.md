@@ -9,6 +9,7 @@ This project follows SemVer. See `VERSION` for the current package version.
 ### Changed
 
 - Marked cross-terminal/cross-device Mesh state sync as experimental in docs/runbooks and clarified that every target device must have the standalone `mesh` CLI installed; `openclaw mesh` is not a fallback.
+- Documented explicit cross-device/host-local sync receipts so agents report which Mesh layer changed, including state worktree and bare repo commits.
 - Migration capsules now skip host-local `TOOLS.md` by default so WSL/macOS absolute paths and local tool boundaries are not copied blindly across devices.
 - Added a first-install repair checklist for migrated clients that have Mesh-dependent rules but no standalone `mesh` CLI or operational `.mesh/shared`, `.mesh/tasks`, and `.mesh/pulse` tree.
 

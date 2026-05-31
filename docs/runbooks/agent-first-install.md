@@ -220,7 +220,8 @@ Before final response / handoff:
 1. Run `mesh validate` if you wrote Mesh state.
 2. Make sure your pulse is not stale.
 3. If this root uses cross-device Git sync, run `mesh state sync --message "<agent> mesh update"`.
-4. If task state changed, make the final task status/history match the actual outcome.
+4. If sync writes to a state worktree or bare repo outside the current project, include an explicit receipt: sync method, state root, final commit/hash, and whether the current project `.mesh` was updated or still needs pull/sync.
+5. If task state changed, make the final task status/history match the actual outcome.
 ```
 
 ## 4. Lifecycle command patterns
@@ -270,6 +271,23 @@ mesh task update --id <task-id> --status closed --progress 1
 mesh pulse update --agent <agent> --status done --task <task-id> --summary "done"
 mesh state sync --message "<agent> completed <task-id>"  # when using a Git state remote
 ```
+
+Cross-device / host-local sync receipt:
+
+```bash
+mesh root
+mesh state status
+git -C /path/to/state-worktree log --oneline -n 1
+git --git-dir=/path/to/state.git log --oneline -n 1
+```
+
+When using `mesh state sync`, a Tailscale SSH state remote, or a host-local helper such as `~/mesh-local-sync.sh`, do not report only "synced to Mesh". Report the layer that changed:
+
+- current project `.mesh`
+- state worktree, for example `~/agent-mesh-state/.mesh`
+- bare state repo, for example `~/agent-mesh-state.git`
+
+Receiving agents must also check both layers before saying another agent did not sync. `mesh root` and `mesh state status` show the current root/config; state repo commits may exist even when the current project `.mesh` has not pulled them yet.
 
 ## 5. Add a heartbeat / watchdog
 
